@@ -41,15 +41,15 @@ class ResultsManager:
         self.timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         self.hostname = socket.gethostname()
 
-    def save_raw_results(self, suite_name: str, config: dict, results: dict) -> Path:
+    def save_raw_results(self, test_name: str, config: dict, results: dict) -> Path:
         """Save raw results as JSON for a single run."""
-        filename = f"{suite_name}_{self.timestamp}.json"
+        filename = f"{test_name}_{self.timestamp}.json"
         filepath = self.raw_dir / filename
 
         raw_data = {
             "metadata": {
                 "run_id": self.timestamp,
-                "suite_name": suite_name,
+                "test_name": test_name,
                 "hostname": self.hostname,
             },
             "config": config,
@@ -65,7 +65,7 @@ class ResultsManager:
     def append_to_consolidated(
         self,
         suite_type: str,
-        suite_name: str,
+        test_name: str,
         config: dict,
         results: dict,
         benchmark_name: str,
@@ -80,7 +80,7 @@ class ResultsManager:
             "run_id": self.timestamp,
             "hostname": self.hostname,
             "suite_type": suite_type,
-            "suite_name": suite_name,
+            "test_name": test_name,
             "benchmark_name": benchmark_name,
             "dataset": config.get("dataset", "N/A"),
             "metric": config.get("metric", "N/A"),
@@ -118,12 +118,12 @@ class ResultsManager:
 
     def generate_recall_vs_qps_chart(
         self,
-        suite_name: str,
+        test_name: str,
         results: dict,
         config: dict,
     ) -> Path:
         """Generate a recall vs QPS scatter plot."""
-        filepath = self.charts_dir / f"{suite_name}_recall_vs_qps.png"
+        filepath = self.charts_dir / f"{test_name}_recall_vs_qps.png"
 
         benchmarks = config.get("benchmarks", {})
         if not benchmarks:
@@ -159,7 +159,7 @@ class ResultsManager:
 
         ax.set_xlabel("Recall", fontsize=12)
         ax.set_ylabel("QPS", fontsize=12)
-        ax.set_title(f"Recall vs QPS - {suite_name}", fontsize=14)
+        ax.set_title(f"Recall vs QPS - {test_name}", fontsize=14)
         ax.grid(True, alpha=0.3)
 
         # Set axis limits with padding
@@ -177,12 +177,12 @@ class ResultsManager:
 
     def generate_latency_chart(
         self,
-        suite_name: str,
+        test_name: str,
         results: dict,
         config: dict,
     ) -> Path:
         """Generate a latency comparison bar chart."""
-        filepath = self.charts_dir / f"{suite_name}_latency.png"
+        filepath = self.charts_dir / f"{test_name}_latency.png"
 
         benchmarks = config.get("benchmarks", {})
         if not benchmarks:
@@ -211,7 +211,7 @@ class ResultsManager:
 
         ax.set_xlabel("Benchmark Configuration", fontsize=12)
         ax.set_ylabel("Latency (ms)", fontsize=12)
-        ax.set_title(f"Query Latency - {suite_name}", fontsize=14)
+        ax.set_title(f"Query Latency - {test_name}", fontsize=14)
         ax.set_xticks(x)
         ax.set_xticklabels(bench_names, rotation=45, ha="right")
         ax.legend()
@@ -250,12 +250,12 @@ class ResultsManager:
 
     def generate_build_time_chart(
         self,
-        suite_name: str,
+        test_name: str,
         results: dict,
         config: dict,
     ) -> Path:
         """Generate a build time breakdown chart."""
-        filepath = self.charts_dir / f"{suite_name}_build_times.png"
+        filepath = self.charts_dir / f"{test_name}_build_times.png"
 
         load_time = results.get("load_time", 0) or 0
         clustering_time_str = results.get("clustering_time", "0")
@@ -283,7 +283,7 @@ class ResultsManager:
         bars = ax.barh(categories, times, color=colors, edgecolor="black")
 
         ax.set_xlabel("Time (seconds)", fontsize=12)
-        ax.set_title(f"Build Time Breakdown - {suite_name}", fontsize=14)
+        ax.set_title(f"Build Time Breakdown - {test_name}", fontsize=14)
         ax.grid(True, alpha=0.3, axis="x")
 
         # Add value labels
@@ -323,7 +323,7 @@ class ResultsManager:
     def generate_markdown_report(
         self,
         suite_type: str,
-        suite_name: str,
+        test_name: str,
         config: dict,
         results: dict,
         query_clients: int = 1,
@@ -336,7 +336,7 @@ class ResultsManager:
 
         Args:
             suite_type: Type of benchmark suite (pgvector, vectorchord, pgpu)
-            suite_name: Name of the benchmark suite
+            test_name: Name of the benchmark suite
             config: Suite configuration dictionary
             results: Benchmark results dictionary
             query_clients: Number of parallel query clients used
@@ -344,15 +344,15 @@ class ResultsManager:
             pg_stats: Pre-formatted markdown string with PostgreSQL statistics
             system_dashboard_path: Path to system metrics dashboard image
         """
-        filepath = self.reports_dir / f"{suite_name}_report.md"
+        filepath = self.reports_dir / f"{test_name}_report.md"
 
         # Generate charts first
-        recall_qps_chart = self.generate_recall_vs_qps_chart(suite_name, results, config)
-        latency_chart = self.generate_latency_chart(suite_name, results, config)
-        build_time_chart = self.generate_build_time_chart(suite_name, results, config)
+        recall_qps_chart = self.generate_recall_vs_qps_chart(test_name, results, config)
+        latency_chart = self.generate_latency_chart(test_name, results, config)
+        build_time_chart = self.generate_build_time_chart(test_name, results, config)
 
         lines = [
-            f"# Benchmark Report: {suite_name}",
+            f"# Benchmark Report: {test_name}",
             "",
             f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
             f"**Host:** {self.hostname}",
@@ -534,17 +534,17 @@ class ResultsManager:
             pg_stats: Pre-formatted markdown string with PostgreSQL statistics
             system_dashboard_path: Path to system metrics dashboard image
         """
-        for suite_name, suite_config in config.items():
-            suite_results = results.get(suite_name, {})
+        for test_name, suite_config in config.items():
+            suite_results = results.get(test_name, {})
 
             # Save raw results
-            self.save_raw_results(suite_name, suite_config, suite_results)
+            self.save_raw_results(test_name, suite_config, suite_results)
 
             # Append each benchmark to consolidated CSV
             for bench_name, bench_config in suite_config.get("benchmarks", {}).items():
                 self.append_to_consolidated(
                     suite_type=suite_type,
-                    suite_name=suite_name,
+                    test_name=test_name,
                     config=suite_config,
                     results=suite_results,
                     benchmark_name=bench_name,
@@ -561,7 +561,7 @@ class ResultsManager:
             # Generate report with charts
             self.generate_markdown_report(
                 suite_type=suite_type,
-                suite_name=suite_name,
+                test_name=test_name,
                 config=suite_config,
                 results=suite_results,
                 query_clients=query_clients,
