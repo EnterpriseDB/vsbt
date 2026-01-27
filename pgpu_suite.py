@@ -42,7 +42,7 @@ class TestSuite(common.TestSuite):
         conn.execute(f"SET vchordrq.epsilon={epsilon}")
 
         # Use prepared statement for repeated queries
-        conn.execute(f"PREPARE bench_query AS SELECT id FROM {table_name} ORDER BY embedding {metric_ops} $1::vector LIMIT {top}")
+        conn.execute(f"PREPARE bench_query (vector) AS SELECT id FROM {table_name} ORDER BY embedding {metric_ops} $1 LIMIT {top}")
 
         results = []
         for query, ground_truth in zip(test, answer):

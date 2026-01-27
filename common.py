@@ -5,7 +5,6 @@ import os
 import threading
 import time
 
-import numpy
 import numpy as np
 import psutil
 import psycopg
@@ -186,9 +185,9 @@ def calculate_metrics(
     qps = (m * query_clients) / total_time
 
     # Calculate latency percentiles (in milliseconds)
-    latencies_ms = numpy.array(latencies) * 1000
-    p50 = numpy.percentile(latencies_ms, 50)
-    p99 = numpy.percentile(latencies_ms, 99)
+    latencies_ms = np.array(latencies) * 1000
+    p50 = np.percentile(latencies_ms, 50)
+    p99 = np.percentile(latencies_ms, 99)
 
     return recall, qps, p50, p99
 
@@ -387,8 +386,8 @@ class TestSuite:
                 chunk_data = data[chunk_start: chunk_start + chunk_len]
 
                 # Cast if needed
-                if chunk_data.dtype != numpy.float32:
-                    chunk_data = chunk_data.astype(numpy.float32)
+                if chunk_data.dtype != np.float32:
+                    chunk_data = chunk_data.astype(np.float32)
 
                 with t_conn.cursor().copy(
                         f"COPY {name} (id, embedding) FROM STDIN WITH (FORMAT BINARY)"
@@ -407,18 +406,21 @@ class TestSuite:
             if num_threads > 1: # Careful with python GIL and I/O bound
                 print(f"Parallel load enabled for {name}. Threads: {num_threads}")
                 threads = []
+                batch_rows = 0
                 for i in range(0, n, chunk_size):
                     chunk_len = min(chunk_size, n - i)
                     t = threading.Thread(target=load_chunk, args=(i, chunk_len))
                     threads.append(t)
+                    batch_rows += chunk_len
 
                     if len(threads) >= num_threads or (i + chunk_len) >= n:
                         for thread in threads:
                             thread.start()
                         for thread in threads:
                             thread.join()
-                            pbar.update(chunk_len * len(threads))
+                        pbar.update(batch_rows)
                         threads = []
+                        batch_rows = 0
             else:
                 print(f"Sequential load enabled for {name} (Optimized Mmap)")
                 for i in range(0, n, chunk_size):
@@ -440,7 +442,7 @@ class TestSuite:
             ) as copy:
                 copy.set_types(["integer", "vector"])
                 for i, vec in data:
-                    copy.write_row((i, vec.astype(numpy.float16)))
+                    copy.write_row((i, vec))
                     while conn.pgconn.flush() == 1:
                         time.sleep(0)
                     pbar.update(1)
@@ -453,7 +455,7 @@ class TestSuite:
 
     def add_centroids_to_table(self, centroids_file: str, table_name: str = "public.centroids"):
         # Load centroids from the .npy file
-        centroids = numpy.load(centroids_file)
+        centroids = np.load(centroids_file)
         if centroids.ndim != 2:
             raise ValueError("Centroids file must contain a 2D array.")
 
@@ -578,7 +580,7 @@ class TestSuite:
         conn.execute("SET jit=false")
 
         # Use prepared statement for repeated queries
-        conn.execute(f"PREPARE bench_query AS SELECT id FROM {table_name} ORDER BY embedding {metric_ops} $1 LIMIT {top}")
+        conn.execute(f"PREPARE bench_query (vector) AS SELECT id FROM {table_name} ORDER BY embedding {metric_ops} $1 LIMIT {top}")
 
         # Pre-convert answers if numpy
         answers_list = dataset["answer"]
@@ -601,7 +603,7 @@ class TestSuite:
                 answers = answers.tolist()
 
             # Simple set intersection for Recall
-            hit = len(set([p[0] for p in result[:top]]) & set(answers))
+            hit = len({p[0] for p in result[:top]} & set(answers))
             results.append((hit, query_time))
 
             curr_results = results[: i + 1]
