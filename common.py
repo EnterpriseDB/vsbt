@@ -764,7 +764,7 @@ class TestSuite:
 
             if detected_devices:
                 self.devices = detected_devices
-                print(f"Auto-detected PostgreSQL data device: {', '.join(self.devices)}")
+                self.debug_log(f"Auto-detected PostgreSQL data device: {', '.join(self.devices)}")
             else:
                 print("Warning: Could not auto-detect PostgreSQL data device. IO monitoring disabled.")
                 self.devices = []
