@@ -492,23 +492,36 @@ class TestSuite:
         conn = self.create_connection()
         with conn.cursor() as acur:
             blocks_total = 0
+            phase = "initializing"
             while blocks_total == 0:
                 time.sleep(0.5)
-                acur.execute("SELECT blocks_total FROM pg_stat_progress_create_index")
+                acur.execute("SELECT blocks_total, phase FROM pg_stat_progress_create_index")
                 result = acur.fetchone()
-                blocks_total = result[0] if result else 0
+                if result:
+                    blocks_total = result[0] or 0
+                    phase = result[1] or "initializing"
 
-            pbar = tqdm(smoothing=0.0, total=blocks_total, desc="Building index", ncols=80)
+            pbar = tqdm(smoothing=0.0, total=blocks_total, desc=f"Building index ({phase})", ncols=100,
+                        bar_format="{desc}: {percentage:3.0f}%|{bar}| [{elapsed}<{remaining}]")
             while True:
                 if event.is_set():
                     pbar.update(pbar.total - pbar.n)
                     pbar.close()
                     conn.close()
                     break
-                acur.execute("SELECT blocks_done FROM pg_stat_progress_create_index")
+                acur.execute("SELECT blocks_done, blocks_total, phase FROM pg_stat_progress_create_index")
                 result = acur.fetchone()
-                blocks_done = result[0] if result else 0
-                pbar.update(max(blocks_done - pbar.n, 0))
+                if result:
+                    blocks_done = result[0] or 0
+                    new_total = result[1] or blocks_total
+                    phase = result[2] or phase
+                    # Update total if phase changed
+                    if new_total != pbar.total:
+                        pbar.total = new_total
+                        pbar.n = 0
+                        pbar.refresh()
+                    pbar.set_description(f"Building index ({phase})")
+                    pbar.update(max(blocks_done - pbar.n, 0))
                 time.sleep(0.5)
 
     def create_index(self, suite_name: str, table_name: str, dataset: dict) -> tuple[
