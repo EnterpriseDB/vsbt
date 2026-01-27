@@ -29,6 +29,27 @@ def find_raw_files(results_dir: Path) -> list[Path]:
     return sorted(raw_dir.glob("*.json"), key=lambda p: p.stat().st_mtime)
 
 
+def parse_run_data(data: dict) -> dict:
+    """
+    Parse raw JSON data into a normalized format.
+
+    Handles the structure: {metadata: {...}, config: {...}, results: {...}}
+    """
+    metadata = data.get("metadata", {})
+    config = data.get("config", {})
+    results = data.get("results", {})
+
+    return {
+        "run_id": metadata.get("run_id", "unknown"),
+        "test_name": metadata.get("test_name", "unknown"),
+        "hostname": metadata.get("hostname", "unknown"),
+        "dataset": config.get("dataset", "unknown"),
+        "config": config,
+        "results": results,
+        "benchmarks": config.get("benchmarks", {}),
+    }
+
+
 def list_runs(results_dir: Path):
     """List all available benchmark runs."""
     raw_files = find_raw_files(results_dir)
@@ -43,97 +64,126 @@ def list_runs(results_dir: Path):
     for i, filepath in enumerate(raw_files, 1):
         try:
             data = load_raw_result(filepath)
-            suite_name = list(data.keys())[0] if data else "unknown"
-            suite_data = data.get(suite_name, {})
+            parsed = parse_run_data(data)
 
-            # Extract key info
-            dataset = suite_data.get("dataset", "unknown")
-            timestamp = filepath.stem.split("_")[-1] if "_" in filepath.stem else "unknown"
-            num_benchmarks = len(suite_data.get("benchmarks", {}))
-
-            rows.append([i, filepath.name, suite_name, dataset, num_benchmarks, timestamp])
+            rows.append([
+                i,
+                parsed["run_id"],
+                parsed["test_name"],
+                parsed["dataset"],
+                len(parsed["benchmarks"]),
+            ])
         except Exception as e:
-            rows.append([i, filepath.name, "error", str(e)[:30], "-", "-"])
+            rows.append([i, "error", str(e)[:40], "-", "-"])
 
-    headers = ["#", "Filename", "Suite", "Dataset", "Benchmarks", "Timestamp"]
+    headers = ["#", "Run ID", "Test Name", "Dataset", "Benchmarks"]
     print(tabulate(rows, headers=headers, tablefmt="simple"))
     print()
 
 
-def get_run_by_index(results_dir: Path, index: int) -> Optional[Path]:
-    """Get a raw result file by its index (1-based)."""
+def get_run_by_identifier(results_dir: Path, identifier: str) -> Optional[Path]:
+    """
+    Get a raw result file by index (1-based) or run_id.
+
+    Args:
+        identifier: Either an index number or a run_id timestamp
+    """
     raw_files = find_raw_files(results_dir)
-    if 1 <= index <= len(raw_files):
-        return raw_files[index - 1]
+
+    # Try as index first
+    try:
+        index = int(identifier)
+        if 1 <= index <= len(raw_files):
+            return raw_files[index - 1]
+    except ValueError:
+        pass
+
+    # Try as run_id
+    for filepath in raw_files:
+        try:
+            data = load_raw_result(filepath)
+            parsed = parse_run_data(data)
+            if parsed["run_id"] == identifier:
+                return filepath
+        except Exception:
+            continue
+
     return None
 
 
-def extract_suite_summary(data: dict) -> dict:
-    """Extract summary metrics from a run for cross-suite comparison."""
-    summary = {}
+def extract_run_summary(data: dict) -> dict:
+    """Extract summary metrics from a run for comparison."""
+    parsed = parse_run_data(data)
+    results = parsed["results"]
+    config = parsed["config"]
 
-    for suite_name, suite_data in data.items():
-        results = suite_data.get("results", suite_data)  # Handle both formats
-        benchmarks = results.get("benchmarks", suite_data.get("benchmarks", {}))
+    # Find best QPS at recall >= 95%
+    best_qps_95 = None
+    best_recall_95 = None
+    best_p50 = None
+    best_p99 = None
 
-        # Find best QPS at recall >= 95%
-        best_qps_95 = None
-        best_recall_95 = None
-        best_p50 = None
-        best_p99 = None
+    for bench_name, bench_data in results.items():
+        if not isinstance(bench_data, dict):
+            continue
 
-        for bench_name, bench_data in benchmarks.items():
-            recall = bench_data.get("recall", 0)
-            qps = bench_data.get("qps", 0)
-            p50 = bench_data.get("p50_ms") or bench_data.get("p50_latency", 0)
-            p99 = bench_data.get("p99_ms") or bench_data.get("p99_latency", 0)
+        recall = bench_data.get("recall", 0)
+        qps = bench_data.get("qps", 0)
+        p50 = bench_data.get("p50_latency") or bench_data.get("p50_ms", 0)
+        p99 = bench_data.get("p99_latency") or bench_data.get("p99_ms", 0)
 
-            # Best QPS at recall >= 95%
-            if recall >= 0.95:
-                if best_qps_95 is None or qps > best_qps_95:
-                    best_qps_95 = qps
-                    best_recall_95 = recall
+        # Best QPS at recall >= 95%
+        if recall >= 0.95:
+            if best_qps_95 is None or qps > best_qps_95:
+                best_qps_95 = qps
+                best_recall_95 = recall
 
-            # Track best (lowest) latencies
-            if p50 and (best_p50 is None or p50 < best_p50):
-                best_p50 = p50
-            if p99 and (best_p99 is None or p99 < best_p99):
-                best_p99 = p99
+        # Track best (lowest) latencies
+        if p50 and (best_p50 is None or p50 < best_p50):
+            best_p50 = p50
+        if p99 and (best_p99 is None or p99 < best_p99):
+            best_p99 = p99
 
-        summary[suite_name] = {
-            "suite_type": "pgvector" if "pgvector" in suite_name.lower() else
-                         "pgpu" if "pgpu" in suite_name.lower() else
-                         "vectorchord",
-            "index_build_time": results.get("index_build_time"),
-            "load_time": results.get("load_time"),
-            "index_size": results.get("index_size"),
-            "best_qps_95": best_qps_95,
-            "best_recall_95": best_recall_95,
-            "best_p50": best_p50,
-            "best_p99": best_p99,
-            "num_benchmarks": len(benchmarks),
-        }
+    # Determine suite type from test name
+    test_name = parsed["test_name"].lower()
+    if "pgvector" in test_name:
+        suite_type = "pgvector"
+    elif "pgpu" in test_name:
+        suite_type = "pgpu"
+    else:
+        suite_type = "vectorchord"
 
-    return summary
+    return {
+        "run_id": parsed["run_id"],
+        "test_name": parsed["test_name"],
+        "suite_type": suite_type,
+        "dataset": parsed["dataset"],
+        "index_build_time": results.get("index_build_time"),
+        "load_time": results.get("load_time"),
+        "index_size": results.get("index_size"),
+        "best_qps_95": best_qps_95,
+        "best_recall_95": best_recall_95,
+        "best_p50": best_p50,
+        "best_p99": best_p99,
+        "num_benchmarks": len(parsed["benchmarks"]),
+    }
 
 
-def compare_runs_summary(results_dir: Path, run_indices: list[int]):
+def compare_runs_summary(results_dir: Path, run_identifiers: list[str]):
     """Compare multiple runs using summary metrics (cross-suite compatible)."""
     # Load all runs
     runs = []
-    for idx in run_indices:
-        path = get_run_by_index(results_dir, idx)
+    for identifier in run_identifiers:
+        path = get_run_by_identifier(results_dir, identifier)
         if not path:
-            print(f"Error: Run #{idx} not found.")
+            print(f"Error: Run '{identifier}' not found.")
             return
         data = load_raw_result(path)
-        summary = extract_suite_summary(data)
-        suite_name = list(summary.keys())[0]
+        summary = extract_run_summary(data)
         runs.append({
-            "idx": idx,
+            "identifier": identifier,
             "path": path,
-            "suite_name": suite_name,
-            "summary": summary[suite_name],
+            "summary": summary,
         })
 
     show_delta = len(runs) == 2
@@ -179,7 +229,8 @@ def compare_runs_summary(results_dir: Path, run_indices: list[int]):
     # List runs
     for i, run in enumerate(runs):
         label = chr(65 + i)  # A, B, C, ...
-        print(f"  Run {label} (#{run['idx']}): {run['suite_name']}")
+        summary = run["summary"]
+        print(f"  Run {label}: {summary['test_name']} (ID: {summary['run_id']})")
     print()
 
     # Build column headers
@@ -252,45 +303,56 @@ def compare_runs_summary(results_dir: Path, run_indices: list[int]):
     print(f"{'=' * 80}\n")
 
 
-def show_run_details(results_dir: Path, run_idx: int):
+def show_run_details(results_dir: Path, identifier: str):
     """Show detailed information about a specific run."""
-    run_path = get_run_by_index(results_dir, run_idx)
+    run_path = get_run_by_identifier(results_dir, identifier)
     if not run_path:
-        print(f"Error: Run #{run_idx} not found.")
+        print(f"Error: Run '{identifier}' not found.")
         return
 
-    print(f"\nDetails for run #{run_idx}: {run_path.name}\n")
-
     data = load_raw_result(run_path)
+    parsed = parse_run_data(data)
 
-    for suite_name, suite_data in data.items():
-        print(f"Suite: {suite_name}")
-        print("-" * 40)
+    print(f"\nDetails for run: {parsed['test_name']} (ID: {parsed['run_id']})\n")
+    print(f"File: {run_path.name}")
+    print("-" * 60)
 
-        # Configuration info
-        config_keys = ["dataset", "lists", "m", "efConstruction", "index_build_time", "load_time"]
-        for key in config_keys:
-            if key in suite_data:
-                print(f"  {key}: {suite_data[key]}")
+    # Configuration info
+    print("\nConfiguration:")
+    config = parsed["config"]
+    config_keys = ["dataset", "metric", "lists", "m", "efConstruction", "samplingFactor",
+                   "residual_quantization", "workers", "top"]
+    for key in config_keys:
+        if key in config:
+            print(f"  {key}: {config[key]}")
 
-        print()
+    # Build metrics
+    print("\nBuild Metrics:")
+    results = parsed["results"]
+    if results.get("load_time"):
+        print(f"  Load Time: {results['load_time']}s")
+    if results.get("index_build_time"):
+        print(f"  Index Build Time: {results['index_build_time']}s")
+    if results.get("index_size"):
+        print(f"  Index Size: {results['index_size']}")
 
-        # Benchmark results
-        benchmarks = suite_data.get("benchmarks", {})
-        if benchmarks:
-            rows = []
-            for bench_name, bench_data in benchmarks.items():
-                rows.append({
-                    "Benchmark": bench_name,
-                    "Recall": f"{bench_data.get('recall', 0):.4f}",
-                    "QPS": f"{bench_data.get('qps', 0):.0f}",
-                    "P50 (ms)": f"{bench_data.get('p50_ms', 0):.2f}",
-                    "P99 (ms)": f"{bench_data.get('p99_ms', 0):.2f}",
-                })
+    # Benchmark results
+    print("\nBenchmark Results:")
+    rows = []
+    for bench_name, bench_data in results.items():
+        if not isinstance(bench_data, dict) or "recall" not in bench_data:
+            continue
+        rows.append({
+            "Benchmark": bench_name,
+            "Recall": f"{bench_data.get('recall', 0):.4f}",
+            "QPS": f"{bench_data.get('qps', 0):.0f}",
+            "P50 (ms)": f"{bench_data.get('p50_latency', 0):.2f}",
+            "P99 (ms)": f"{bench_data.get('p99_latency', 0):.2f}",
+        })
 
-            print("Benchmark Results:")
-            print(tabulate(rows, headers="keys", tablefmt="simple", showindex=False))
-            print()
+    if rows:
+        print(tabulate(rows, headers="keys", tablefmt="simple", showindex=False))
+    print()
 
 
 def main():
@@ -303,11 +365,13 @@ Examples:
   # List all available runs
   python compare_runs.py --list
 
-  # Show details for run #5
+  # Show details for a run (by index or run_id)
   python compare_runs.py --show 5
+  python compare_runs.py --show 20260127135211
 
-  # Compare 2 runs (shows deltas)
+  # Compare 2 runs (shows deltas) - by index or run_id
   python compare_runs.py --compare 3 7
+  python compare_runs.py --compare 20260127135211 20260127133141
 
   # Compare multiple runs (any suite type)
   python compare_runs.py --compare 3 7 12
@@ -327,16 +391,14 @@ Examples:
     )
     parser.add_argument(
         "--show", "-s",
-        type=int,
-        metavar="N",
-        help="Show details for run #N"
+        metavar="ID",
+        help="Show details for a run (by index # or run_id)"
     )
     parser.add_argument(
         "--compare", "-c",
-        type=int,
         nargs="+",
-        metavar="N",
-        help="Compare multiple runs (works across different suite types)"
+        metavar="ID",
+        help="Compare multiple runs (by index # or run_id)"
     )
 
     args = parser.parse_args()
