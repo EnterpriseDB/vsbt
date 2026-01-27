@@ -688,6 +688,7 @@ class TestSuite:
         if not self.skip_add_embeddings:
             if self.system_monitor:
                 self.system_monitor.mark_phase("load_start")
+                self.system_monitor.capture_sample()
             ds_type = ds["type"]
             if ds_type == "hdf5":
                 self.add_embeddings_from_hdf5(name, table_name, ds["train"], self.config[name]["workers"])
@@ -701,6 +702,7 @@ class TestSuite:
             gc.collect()
 
             if self.system_monitor:
+                self.system_monitor.capture_sample()
                 self.system_monitor.mark_phase("load_end")
             self.pg_stats_collector.capture_snapshot("after_load", table_name)
 
@@ -715,9 +717,11 @@ class TestSuite:
         if not self.skip_index_creation:
             if self.system_monitor:
                 self.system_monitor.mark_phase("index_start")
+                self.system_monitor.capture_sample()
             self.create_index(name, table_name, ds)
             self.calculate_index_size(name, table_name)
             if self.system_monitor:
+                self.system_monitor.capture_sample()
                 self.system_monitor.mark_phase("index_end")
             self.pg_stats_collector.capture_snapshot("after_index", table_name)
         else:
@@ -725,8 +729,10 @@ class TestSuite:
 
         if self.system_monitor:
             self.system_monitor.mark_phase("benchmark_start")
+            self.system_monitor.capture_sample()
         self.run_benchmarks(name, table_name, ds, self.query_clients)
         if self.system_monitor:
+            self.system_monitor.capture_sample()
             self.system_monitor.mark_phase("benchmark_end")
         self.pg_stats_collector.capture_snapshot("after_benchmark", table_name)
 

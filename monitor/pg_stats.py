@@ -25,6 +25,21 @@ class PGStatsCollector:
         # Capture custom settings immediately (connection may close later)
         self._custom_settings = self._fetch_custom_settings()
 
+    # Settings to exclude from custom settings report (not relevant to benchmarks)
+    SETTINGS_BLACKLIST = {
+        'TimeZone',
+        'default_text_search_config',
+        'lc_messages',
+        'lc_monetary',
+        'lc_numeric',
+        'lc_time',
+        'log_timezone',
+        'application_name',
+        'client_encoding',
+        'DateStyle',
+        'IntervalStyle',
+    }
+
     def _fetch_custom_settings(self) -> list[dict]:
         """
         Fetch PostgreSQL settings that differ from their default values.
@@ -50,6 +65,9 @@ class PGStatsCollector:
                 settings = []
                 for row in cur.fetchall():
                     name, setting, unit, boot_val, source, category = row
+                    # Skip blacklisted settings
+                    if name in self.SETTINGS_BLACKLIST:
+                        continue
                     settings.append({
                         "name": name,
                         "setting": setting,
@@ -550,28 +568,64 @@ class PGStatsCollector:
                 lines.append(f"| Checkpoints (requested) | {bgw.get('checkpoints_req', 0):,} |")
                 lines.append(f"| Buffers Written (checkpoint) | {bgw.get('buffers_checkpoint', 0):,} |")
 
-        # Show overall delta
-        if "overall" in summary.get("deltas", {}):
-            overall = summary["deltas"]["overall"]
+        # Show per-phase deltas
+        deltas = summary.get("deltas", {})
+
+        # Define phase display names
+        phase_names = {
+            "baseline_to_after_load": "Data Loading",
+            "after_load_to_after_index": "Index Building",
+            "after_index_to_after_benchmark": "Query Benchmark",
+            "baseline_to_after_index": "Data Loading + Index Building",
+            "baseline_to_after_benchmark": "Total",
+        }
+
+        # Show phase-by-phase breakdown
+        phase_deltas = [(k, v) for k, v in deltas.items() if k != "overall"]
+        if phase_deltas:
             lines.extend([
                 "",
-                "### Changes During Benchmark",
+                "### Activity by Phase",
                 "",
-                "| Metric | Delta |",
+                "| Phase | Blocks Read | Blocks Hit | Transactions | Checkpoints |",
+                "|-------|-------------|------------|--------------|-------------|",
+            ])
+
+            for delta_key, delta in phase_deltas:
+                phase_name = phase_names.get(delta_key, delta_key)
+                db = delta.get("database", {})
+                bgw = delta.get("bgwriter", {})
+                checkpoints = bgw.get("checkpoints_req", 0) + bgw.get("checkpoints_timed", 0)
+                lines.append(
+                    f"| {phase_name} | {db.get('blks_read', 0):,} | {db.get('blks_hit', 0):,} | "
+                    f"{db.get('xact_commit', 0):,} | {checkpoints:,} |"
+                )
+
+        # Show overall totals
+        if "overall" in deltas:
+            overall = deltas["overall"]
+            db_delta = overall.get("database", {})
+            bgw_delta = overall.get("bgwriter", {})
+
+            lines.extend([
+                "",
+                "### Total Changes",
+                "",
+                "| Metric | Value |",
                 "|--------|-------|",
             ])
 
-            db_delta = overall.get("database", {})
             if db_delta:
-                lines.append(f"| Blocks Read | +{db_delta.get('blks_read', 0):,} |")
-                lines.append(f"| Blocks Hit | +{db_delta.get('blks_hit', 0):,} |")
-                lines.append(f"| Transactions | +{db_delta.get('xact_commit', 0):,} |")
-                lines.append(f"| Rows Inserted | +{db_delta.get('tup_inserted', 0):,} |")
+                lines.append(f"| Blocks Read | {db_delta.get('blks_read', 0):,} |")
+                lines.append(f"| Blocks Hit | {db_delta.get('blks_hit', 0):,} |")
+                lines.append(f"| Transactions | {db_delta.get('xact_commit', 0):,} |")
+                lines.append(f"| Rows Inserted | {db_delta.get('tup_inserted', 0):,} |")
 
-            bgw_delta = overall.get("bgwriter", {})
             if bgw_delta:
-                lines.append(f"| Checkpoints | +{bgw_delta.get('checkpoints_req', 0) + bgw_delta.get('checkpoints_timed', 0):,} |")
-                lines.append(f"| Checkpoint Write Time | +{bgw_delta.get('checkpoint_write_time_ms', 0):,.0f} ms |")
+                total_checkpoints = bgw_delta.get('checkpoints_req', 0) + bgw_delta.get('checkpoints_timed', 0)
+                lines.append(f"| Checkpoints | {total_checkpoints:,} |")
+                if bgw_delta.get('checkpoint_write_time_ms', 0) > 0:
+                    lines.append(f"| Checkpoint Write Time | {bgw_delta.get('checkpoint_write_time_ms', 0):,.0f} ms |")
 
         lines.append("")
         return "\n".join(lines)

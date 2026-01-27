@@ -232,6 +232,17 @@ class ResultsManager:
                 va="bottom",
                 fontsize=8,
             )
+        for bar in bars2:
+            height = bar.get_height()
+            ax.annotate(
+                f"{height:.1f}",
+                xy=(bar.get_x() + bar.get_width() / 2, height),
+                xytext=(0, 3),
+                textcoords="offset points",
+                ha="center",
+                va="bottom",
+                fontsize=8,
+            )
 
         plt.tight_layout()
         plt.savefig(filepath, dpi=150)
