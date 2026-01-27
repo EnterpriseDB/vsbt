@@ -48,8 +48,8 @@ class ResultsManager:
 
         raw_data = {
             "metadata": {
+                "run_id": self.timestamp,
                 "suite_name": suite_name,
-                "timestamp": self.timestamp,
                 "hostname": self.hostname,
             },
             "config": config,
@@ -77,8 +77,7 @@ class ResultsManager:
 
         # Build row data
         row = {
-            "run_id": f"{suite_name}_{self.timestamp}",
-            "timestamp": self.timestamp,
+            "run_id": self.timestamp,
             "hostname": self.hostname,
             "suite_type": suite_type,
             "suite_name": suite_name,
