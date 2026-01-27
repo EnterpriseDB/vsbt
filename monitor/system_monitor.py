@@ -181,18 +181,47 @@ class SystemMonitor:
     Portable system monitoring using psutil.
 
     Collects CPU, memory, and disk IO metrics without relying on
-    OS-specific tools like iostat.
+    OS-specific tools like iostat. Supports continuous background
+    monitoring with configurable sampling interval.
     """
 
-    def __init__(self, results_dir: str = "./results", devices: Optional[list[str]] = None):
+    def __init__(self, results_dir: str = "./results", devices: Optional[list[str]] = None,
+                 sample_interval: float = 1.0):
         self.results_dir = Path(results_dir)
         self.results_dir.mkdir(parents=True, exist_ok=True)
 
         self.devices = devices  # Specific devices to monitor (None = aggregate all)
+        self.sample_interval = sample_interval  # Seconds between samples
         self.samples = []
         self.phase_markers = []  # [(timestamp, phase_name), ...]
         self._start_time = None
         self._prev_disk_io = None
+        self._monitor_thread = None
+        self._stop_event = None
+
+    def start(self):
+        """Start continuous background monitoring."""
+        import threading
+        if self._monitor_thread is not None:
+            return  # Already running
+
+        self._stop_event = threading.Event()
+        self._monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
+        self._monitor_thread.start()
+
+    def stop(self):
+        """Stop background monitoring."""
+        if self._stop_event is not None:
+            self._stop_event.set()
+        if self._monitor_thread is not None:
+            self._monitor_thread.join(timeout=2.0)
+            self._monitor_thread = None
+
+    def _monitor_loop(self):
+        """Background monitoring loop."""
+        while not self._stop_event.is_set():
+            self.capture_sample()
+            self._stop_event.wait(self.sample_interval)
 
     def _get_disk_io_counters(self):
         """
