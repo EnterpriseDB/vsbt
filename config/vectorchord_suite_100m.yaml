@@ -8,7 +8,7 @@ vc-laion-100m-160000-test-ip-128:
   kmeans_dimension: 768 # Note: these are the settings to be reduced for faster execution on CPU
   lists: [400, 160000]
   build_threads: 128
-  residual_quantization: false
+  residual_quantization: true
   kmeans_hierarchical: true
   pg_parallel_workers: 64
   top: 10
@@ -66,7 +66,7 @@ vc-laion-100m-160000-test-ip-64:
   kmeans_dimension: 768 # Note: these are the settings to be reduced for faster execution on CPU
   lists: [400, 160000]
   build_threads: 64
-  residual_quantization: false
+  residual_quantization: true
   kmeans_hierarchical: true
   pg_parallel_workers: 64
   top: 10
@@ -125,7 +125,7 @@ vc-laion-100m-160000-test-ip-32:
   lists: [400, 160000]
   build_threads: 32
   batchSize: 10000000
-  residual_quantization: false
+  residual_quantization: true
   kmeans_hierarchical: true
   pg_parallel_workers: 64
   top: 10
@@ -184,7 +184,7 @@ vc-laion-100m-160000-test-ip-16:
   lists: [400, 160000]
   build_threads: 16
   batchSize: 10000000
-  residual_quantization: false
+  residual_quantization: true
   kmeans_hierarchical: true
   pg_parallel_workers: 64
   top: 10
@@ -243,7 +243,7 @@ vc-laion-100m-160000-test-ip-8:
   lists: [400, 160000]
   build_threads: 8
   batchSize: 10000000
-  residual_quantization: false
+  residual_quantization: true
   kmeans_hierarchical: true
   pg_parallel_workers: 64
   top: 10

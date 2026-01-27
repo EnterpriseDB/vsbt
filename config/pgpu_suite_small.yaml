@@ -5,7 +5,7 @@ pgpu-laion-5m-8192-test-ip:
   lists: [90, 8192]
   samplingFactor: 256
   batchSize: 1000000
-  residual_quantization: false
+  residual_quantization: true
   pg_parallel_workers: 63
   top: 10
   benchmarks:

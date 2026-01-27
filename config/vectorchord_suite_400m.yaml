@@ -8,7 +8,7 @@ vc-laion-400m-160000-test-ip-128:
   kmeans_dimension: 512 # Note: these are the settings to be reduced for faster execution on CPU
   lists: [400, 160000]
   build_threads: 32
-  residual_quantization: false
+  residual_quantization: true
   kmeans_hierarchical: true
   pg_parallel_workers: 32
   top: 10

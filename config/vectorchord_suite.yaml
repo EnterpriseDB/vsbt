@@ -7,7 +7,7 @@ vc-laion-5m-8192-test-ip:
   pg_parallel_workers: 63
   kmeans_hierarchical: true
   kmeans_dimension: 100
-  residual_quantization: false
+  residual_quantization: true
   top: 10
   benchmarks:
     20-1.0:
