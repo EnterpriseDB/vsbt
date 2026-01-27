@@ -216,17 +216,40 @@ pgpu-laion-100m-160000-test-ip:
 
 ## Output
 
-Results are saved to `./results/<suite_name>/`:
+Results are organized in the following structure:
 
-| File | Description |
-|------|-------------|
-| `benchmark_results.md` | Summary table with all metrics |
-| `system_report.txt` | Hardware and system information |
-| `cpu_utilization.csv/png` | CPU metrics over time |
-| `*_io_iops.csv` | IOPS data per device |
-| `*_io_bandwidth.csv` | Bandwidth data per device |
-| `*_io_latency.csv` | IO latency data |
-| `metrics_summary.html` | Visual summary of all charts |
+```
+results/
+├── raw/                                    # Individual run data (JSON)
+│   └── {suite_name}_{timestamp}.json
+├── consolidated/                           # Accumulated results across runs
+│   └── all_results.csv
+├── reports/                                # Generated reports
+│   ├── {suite_name}_report.md              # Markdown report with tables
+│   └── charts/
+│       ├── {suite_name}_recall_vs_qps.png  # Recall vs QPS scatter plot
+│       ├── {suite_name}_latency.png        # P50/P99 latency comparison
+│       └── {suite_name}_build_times.png    # Build time breakdown
+└── {suite_name}/                           # OS monitoring data
+    ├── system_report.txt                   # Hardware information
+    ├── cpu_utilization.csv/png             # CPU metrics over time
+    ├── *_io_iops.csv                       # IOPS data per device
+    ├── *_io_bandwidth.csv                  # Bandwidth data per device
+    └── *_io_latency.csv                    # IO latency data
+```
+
+### Generated Reports
+
+Each benchmark run generates:
+
+| Output | Description |
+|--------|-------------|
+| **Markdown Report** | Configuration, build metrics, results table, and embedded charts |
+| **Recall vs QPS Chart** | Scatter plot showing recall/throughput tradeoff |
+| **Latency Chart** | Bar chart comparing P50/P99 latencies across configs |
+| **Build Time Chart** | Horizontal bar showing load/clustering/index build breakdown |
+| **Raw JSON** | Complete results data for programmatic access |
+| **Consolidated CSV** | Append-only CSV accumulating results across all runs |
 
 ### Metrics Reported
 
@@ -237,8 +260,9 @@ Results are saved to `./results/<suite_name>/`:
 | **P50 Latency** | Median query latency (ms) |
 | **P99 Latency** | 99th percentile latency (ms) |
 | **Index Size** | On-disk index size |
-| **Build Time** | Time to create the index |
-| **Load Time** | Time to load embeddings |
+| **Build Time** | Total time to create the index |
+| **Clustering Time** | Time spent on k-means clustering (PGPU only) |
+| **Load Time** | Time to load embeddings into database |
 
 ## Utility Scripts
 
@@ -275,6 +299,7 @@ python verify_deep1B.py
 vector-search/
 ├── common.py                 # Base test suite class
 ├── datasets.py               # Dataset download and loading
+├── results.py                # Results management and visualization
 ├── pgvector_suite.py         # pgvector HNSW benchmarks
 ├── vectorchord_suite.py      # VectorChord IVF benchmarks
 ├── pgpu_suite.py             # GPU-accelerated benchmarks
@@ -292,7 +317,10 @@ vector-search/
 ├── utils/
 │   ├── convert_deep1b.py     # Deep1B format converter
 │   └── verify_deep1B.py      # File integrity checker
-└── results/                  # Output directory
+└── results/                  # Output directory (generated)
+    ├── raw/                  # JSON data per run
+    ├── consolidated/         # Accumulated CSV
+    └── reports/              # Markdown reports and charts
 ```
 
 ## Contributors

@@ -10,9 +10,9 @@ import time
 
 import psycopg
 import pgvector.psycopg
-from mdutils.mdutils import MdUtils
 
 import common
+from results import ResultsManager
 
 
 def build_arg_parse():
@@ -257,73 +257,16 @@ class TestSuite(common.TestSuite):
         )
 
     def generate_markdown_result(self):
-        """Generate a markdown file with benchmark results."""
+        """Generate benchmark results with charts and consolidated CSV."""
         self.debug_log(f"Results: {self.results}")
 
-        md_file = MdUtils(
-            file_name="./results/benchmark_results",
-            title="Benchmark Results",
+        results_manager = ResultsManager()
+        results_manager.process_suite_results(
+            suite_type="vectorchord",
+            config=self.config,
+            results=self.results,
+            query_clients=self.query_clients,
         )
-
-        headers = [
-            "test_name",
-            "dataset",
-            "workers",
-            "metric",
-            "query_clients",
-            "lists",
-            "sampling_factor",
-            "nprob",
-            "epsilon",
-            "top",
-            "load_time",
-            "build_threads",
-            "index_build_time",
-            "index_size",
-            "recall",
-            "qps",
-            "p50_latency",
-            "p99_latency",
-        ]
-
-        table_data = list(headers)
-        rows = 1
-
-        for suite_name, suite in self.config.items():
-            suite_config = self.config[suite_name]
-            suite_results = self.results[suite_name]
-
-            for benchmark_name, benchmark in suite["benchmarks"].items():
-                rows += 1
-                table_data.extend([
-                    suite_name,
-                    suite_config["dataset"],
-                    suite_config["workers"],
-                    suite_config["metric"],
-                    self.query_clients,
-                    suite_results.get("lists", "N/A"),
-                    suite_config["samplingFactor"],
-                    benchmark["nprob"],
-                    benchmark["epsilon"],
-                    suite_config["top"],
-                    suite_results.get("load_time", "N/A"),
-                    suite_results.get("build_threads", "N/A"),
-                    suite_results.get("index_build_time", "N/A"),
-                    suite_results.get("index_size", "N/A"),
-                    f'{suite_results[benchmark_name]["recall"]:.4f}',
-                    f'{suite_results[benchmark_name]["qps"]:.4f}',
-                    f'{suite_results[benchmark_name]["p50_latency"]:.4f}',
-                    f'{suite_results[benchmark_name]["p99_latency"]:.4f}',
-                ])
-
-        md_file.new_table(
-            columns=len(headers),
-            rows=rows,
-            text=table_data,
-            text_align="right",
-        )
-
-        md_file.create_md_file()
 
 
 def main():

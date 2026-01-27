@@ -1,5 +1,6 @@
 h5py==3.14.0
 matplotlib==3.10.3
+numpy>=1.24.0
 pandas==2.3.0
 psutil==7.0.0
 psycopg[binary,pool]==3.2.9
