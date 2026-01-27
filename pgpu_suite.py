@@ -203,7 +203,8 @@ class TestSuite(common.TestSuite):
 
         event.set()
         index_monitor_thread.join()
-        os_monitor_thread.join()
+        if os_monitor_thread:
+            os_monitor_thread.join()
 
     def sequential_bench(
         self,
@@ -238,12 +239,20 @@ class TestSuite(common.TestSuite):
         self.debug_log(f"Results: {self.results}")
 
         results_manager = ResultsManager()
-        results_manager.process_suite_results(
-            suite_type="pgpu",
-            config=self.config,
-            results=self.results,
-            query_clients=self.query_clients,
-        )
+
+        # Get monitoring data for each suite
+        for suite_name in self.config:
+            system_metrics, pg_stats, dashboard_path = self.get_monitoring_data(suite_name)
+
+            results_manager.process_suite_results(
+                suite_type="pgpu",
+                config={suite_name: self.config[suite_name]},
+                results={suite_name: self.results.get(suite_name, {})},
+                query_clients=self.query_clients,
+                system_metrics=system_metrics,
+                pg_stats=pg_stats,
+                system_dashboard_path=dashboard_path,
+            )
 
 
 def main():

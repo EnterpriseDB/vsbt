@@ -2,14 +2,15 @@
 Results Management Module
 
 Handles saving, consolidating, and visualizing benchmark results.
+Includes system metrics and PostgreSQL statistics integration.
 """
 
 import csv
 import json
-import os
 import socket
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -318,8 +319,23 @@ class ResultsManager:
         config: dict,
         results: dict,
         query_clients: int = 1,
+        system_metrics: Optional[str] = None,
+        pg_stats: Optional[str] = None,
+        system_dashboard_path: Optional[Path] = None,
     ) -> Path:
-        """Generate a comprehensive markdown report with embedded charts."""
+        """
+        Generate a comprehensive markdown report with embedded charts.
+
+        Args:
+            suite_type: Type of benchmark suite (pgvector, vectorchord, pgpu)
+            suite_name: Name of the benchmark suite
+            config: Suite configuration dictionary
+            results: Benchmark results dictionary
+            query_clients: Number of parallel query clients used
+            system_metrics: Pre-formatted markdown string with system metrics
+            pg_stats: Pre-formatted markdown string with PostgreSQL statistics
+            system_dashboard_path: Path to system metrics dashboard image
+        """
         filepath = self.reports_dir / f"{suite_name}_report.md"
 
         # Generate charts first
@@ -455,6 +471,30 @@ class ResultsManager:
                 "",
             ])
 
+        # Add system metrics section if provided
+        if system_metrics:
+            lines.extend([
+                "---",
+                "",
+                system_metrics,
+            ])
+
+            # Add system dashboard if available
+            if system_dashboard_path and system_dashboard_path.exists():
+                lines.extend([
+                    "",
+                    f"![System Dashboard](charts/{system_dashboard_path.name})",
+                    "",
+                ])
+
+        # Add PostgreSQL stats section if provided
+        if pg_stats:
+            lines.extend([
+                "---",
+                "",
+                pg_stats,
+            ])
+
         # Write file
         with open(filepath, "w") as f:
             f.write("\n".join(lines))
@@ -468,11 +508,23 @@ class ResultsManager:
         config: dict,
         results: dict,
         query_clients: int = 1,
+        system_metrics: Optional[str] = None,
+        pg_stats: Optional[str] = None,
+        system_dashboard_path: Optional[Path] = None,
     ):
         """
         Process and save all results for a benchmark suite.
 
         This is the main entry point for saving results after a benchmark run.
+
+        Args:
+            suite_type: Type of benchmark suite (pgvector, vectorchord, pgpu)
+            config: Suite configuration dictionary
+            results: Benchmark results dictionary
+            query_clients: Number of parallel query clients used
+            system_metrics: Pre-formatted markdown string with system metrics
+            pg_stats: Pre-formatted markdown string with PostgreSQL statistics
+            system_dashboard_path: Path to system metrics dashboard image
         """
         for suite_name, suite_config in config.items():
             suite_results = results.get(suite_name, {})
@@ -491,6 +543,13 @@ class ResultsManager:
                     benchmark_config=bench_config,
                 )
 
+            # Copy system dashboard to charts directory if provided
+            dashboard_in_charts = None
+            if system_dashboard_path and system_dashboard_path.exists():
+                import shutil
+                dashboard_in_charts = self.charts_dir / system_dashboard_path.name
+                shutil.copy(system_dashboard_path, dashboard_in_charts)
+
             # Generate report with charts
             self.generate_markdown_report(
                 suite_type=suite_type,
@@ -498,6 +557,9 @@ class ResultsManager:
                 config=suite_config,
                 results=suite_results,
                 query_clients=query_clients,
+                system_metrics=system_metrics,
+                pg_stats=pg_stats,
+                system_dashboard_path=dashboard_in_charts,
             )
 
         print(f"\nConsolidated results: {self.consolidated_dir / 'all_results.csv'}")

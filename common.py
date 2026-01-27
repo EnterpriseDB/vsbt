@@ -1,24 +1,26 @@
 import argparse
-from multiprocessing.util import debug
-
-import yaml
-import psycopg
-import pgvector
-import os
-import h5py
-import time
-import threading
-import numpy
 import gc
-import psutil
-import numpy as np
 import multiprocessing as mp
+import os
+import threading
 import time
 
+import numpy
+import numpy as np
+import psutil
+import psycopg
+import yaml
 from tqdm import tqdm
 
 import datasets
 import monitor.os_stats
+from monitor import (
+    SystemMonitor,
+    PGStatsCollector,
+    generate_system_report,
+    is_local_database,
+    detect_pg_io_device,
+)
 
 
 def build_arg_parse(parser: argparse.ArgumentParser):
@@ -41,8 +43,8 @@ def build_arg_parse(parser: argparse.ArgumentParser):
     parser.add_argument(
         "--devices",
         nargs='+',
-        help='Block devices to be monitored',
-        default=["dm-0"],
+        help='Block devices to be monitored (auto-detected if not specified)',
+        default=None,
     )
 
     parser.add_argument(
@@ -223,6 +225,16 @@ class TestSuite:
         self.max_load_threads = max_load_threads
         self.debug = debug
         self.overwrite_table = overwrite_table
+
+        # Check if database is local or remote
+        self.is_local_db = is_local_database(url)
+        if not self.is_local_db:
+            print(f"Remote database detected. System monitoring will be skipped.")
+            print(f"PostgreSQL statistics will still be collected.")
+
+        # Monitors (initialized per suite)
+        self.system_monitor = None
+        self.pg_stats_collector = None
 
     def debug_log(self, msg):
         if self.debug:
@@ -505,11 +517,15 @@ class TestSuite:
             conn.close()
 
         event = threading.Event()
-        os_monitor_thread = threading.Thread(
-            target=monitor.os_stats.monitor_and_generate_report,
-            args=(f"./results/{suite_name}/index_build", self.devices, event),
-        )
-        os_monitor_thread.start()
+
+        # Only start OS monitor if devices are configured
+        os_monitor_thread = None
+        if self.devices:
+            os_monitor_thread = threading.Thread(
+                target=monitor.os_stats.monitor_and_generate_report,
+                args=(f"./results/{suite_name}/index_build", self.devices, event),
+            )
+            os_monitor_thread.start()
 
         index_monitor_thread = threading.Thread(
             target=self.monitor_index_build,
@@ -591,11 +607,15 @@ class TestSuite:
     def run_benchmark(self, suite_name: str, name: str, table_name: str, result_dir: str, benchmark: dict,
                       dataset: dict, query_clients):
         event = threading.Event()
-        os_monitor_thread = threading.Thread(
-            target=monitor.os_stats.monitor_and_generate_report,
-            args=(result_dir, self.devices, event),
-        )
-        os_monitor_thread.start()
+
+        # Only start OS monitor if devices are configured
+        os_monitor_thread = None
+        if self.devices:
+            os_monitor_thread = threading.Thread(
+                target=monitor.os_stats.monitor_and_generate_report,
+                args=(result_dir, self.devices, event),
+            )
+            os_monitor_thread.start()
 
         top = self.config[suite_name]["top"]
         metric = self.config[suite_name]["metric"]
@@ -613,7 +633,8 @@ class TestSuite:
 
         self.results[suite_name]["metric_ops"] = metric_ops
         event.set()
-        os_monitor_thread.join()
+        if os_monitor_thread:
+            os_monitor_thread.join()
 
         recall, qps, p50, p99 = calculate_metrics(results, top, m, query_clients)
         print(f"Top: {top} | Recall: {recall:.4f} | QPS: {qps:.2f} | P50: {p50:.2f}ms | P99: {p99:.2f}ms")
@@ -644,7 +665,19 @@ class TestSuite:
         table_name = dataset_name.replace("-", "_")
         self.debug_log(f"table_name: {table_name}, dataset: {dataset_name}, centroids: {self.centroids_table}")
 
+        # Initialize system monitor only for local databases
+        if self.is_local_db:
+            self.system_monitor = SystemMonitor(results_dir=f"./results/{name}")
+            self.system_monitor.capture_sample()  # Initial sample
+        else:
+            self.system_monitor = None
+
         self.init_ext(name)
+
+        # Initialize PG stats collector
+        conn = self.create_connection()
+        self.pg_stats_collector = PGStatsCollector(conn)
+        self.pg_stats_collector.capture_snapshot("baseline", table_name)
 
         # 1. LOAD DATASET (Unified)
         ds = datasets.get_dataset(dataset_name)
@@ -653,6 +686,8 @@ class TestSuite:
 
         # 2. ADD EMBEDDINGS
         if not self.skip_add_embeddings:
+            if self.system_monitor:
+                self.system_monitor.mark_phase("load_start")
             ds_type = ds["type"]
             if ds_type == "hdf5":
                 self.add_embeddings_from_hdf5(name, table_name, ds["train"], self.config[name]["workers"])
@@ -665,6 +700,10 @@ class TestSuite:
             del ds["train"]
             gc.collect()
 
+            if self.system_monitor:
+                self.system_monitor.mark_phase("load_end")
+            self.pg_stats_collector.capture_snapshot("after_load", table_name)
+
         if self.centroids is not None and not self.skip_index_creation:
             self.add_centroids_to_table(self.centroids)
         if self.centroids_table and not self.skip_index_creation:
@@ -674,15 +713,66 @@ class TestSuite:
             ds["metric"] = self.config[name]["metric"]
 
         if not self.skip_index_creation:
+            if self.system_monitor:
+                self.system_monitor.mark_phase("index_start")
             self.create_index(name, table_name, ds)
             self.calculate_index_size(name, table_name)
+            if self.system_monitor:
+                self.system_monitor.mark_phase("index_end")
+            self.pg_stats_collector.capture_snapshot("after_index", table_name)
         else:
             print("Skipping index creation as requested.")
 
+        if self.system_monitor:
+            self.system_monitor.mark_phase("benchmark_start")
         self.run_benchmarks(name, table_name, ds, self.query_clients)
+        if self.system_monitor:
+            self.system_monitor.mark_phase("benchmark_end")
+        self.pg_stats_collector.capture_snapshot("after_benchmark", table_name)
+
+        conn.close()
+
+    def get_monitoring_data(self, suite_name: str) -> tuple:
+        """
+        Get formatted monitoring data for reports.
+
+        Returns:
+            Tuple of (system_metrics_md, pg_stats_md, dashboard_path)
+        """
+        system_metrics_md = None
+        pg_stats_md = None
+        dashboard_path = None
+
+        if self.system_monitor:
+            system_metrics_md = self.system_monitor.format_for_report()
+            dashboard_path = self.system_monitor.generate_dashboard(suite_name)
+            self.system_monitor.save_csv(f"{suite_name}_system_metrics.csv")
+
+        if self.pg_stats_collector:
+            pg_stats_md = self.pg_stats_collector.format_for_report()
+
+        return system_metrics_md, pg_stats_md, dashboard_path
 
     def run(self):
         os.makedirs("./results", exist_ok=True)
+
+        # Auto-detect IO device if not specified and database is local
+        if self.is_local_db and self.devices is None:
+            conn = self.create_connection()
+            detected_devices = detect_pg_io_device(conn)
+            conn.close()
+
+            if detected_devices:
+                self.devices = detected_devices
+                print(f"Auto-detected PostgreSQL data device: {', '.join(self.devices)}")
+            else:
+                print("Warning: Could not auto-detect PostgreSQL data device. IO monitoring disabled.")
+                self.devices = []
+
+        # Generate system report only for local databases
+        if self.is_local_db:
+            generate_system_report("./results")
+
         for suite_name in self.config:
             print(f"Running test: {suite_name}")
             self.run_suite(suite_name)

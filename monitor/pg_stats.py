@@ -1,0 +1,452 @@
+"""
+PostgreSQL Statistics Collector
+
+Collects PostgreSQL performance statistics at phase boundaries during benchmarks.
+Only uses stats that don't require ANALYZE to be accurate.
+"""
+
+from datetime import datetime
+from typing import Optional
+
+
+class PGStatsCollector:
+    """
+    Collect PostgreSQL stats at benchmark phase boundaries.
+
+    All stats collected here are live counters that don't depend on
+    ANALYZE or VACUUM having been run.
+    """
+
+    def __init__(self, conn):
+        """Initialize with a database connection."""
+        self.conn = conn
+        self.snapshots = {}
+        self._pg_stat_statements_available = None
+
+    def _check_pg_stat_statements(self) -> bool:
+        """Check if pg_stat_statements extension is available."""
+        if self._pg_stat_statements_available is None:
+            try:
+                with self.conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements'
+                    """)
+                    self._pg_stat_statements_available = cur.fetchone() is not None
+            except Exception:
+                self._pg_stat_statements_available = False
+        return self._pg_stat_statements_available
+
+    def _get_database_stats(self) -> dict:
+        """Get database-level statistics."""
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    blks_read,
+                    blks_hit,
+                    xact_commit,
+                    xact_rollback,
+                    tup_returned,
+                    tup_fetched,
+                    tup_inserted,
+                    tup_updated,
+                    tup_deleted,
+                    temp_files,
+                    temp_bytes,
+                    deadlocks,
+                    blk_read_time,
+                    blk_write_time
+                FROM pg_stat_database
+                WHERE datname = current_database()
+            """)
+            row = cur.fetchone()
+            if row:
+                blks_read, blks_hit = row[0], row[1]
+                hit_ratio = blks_hit / (blks_hit + blks_read) if (blks_hit + blks_read) > 0 else 0
+                return {
+                    "blks_read": blks_read,
+                    "blks_hit": blks_hit,
+                    "cache_hit_ratio": round(hit_ratio, 4),
+                    "xact_commit": row[2],
+                    "xact_rollback": row[3],
+                    "tup_returned": row[4],
+                    "tup_fetched": row[5],
+                    "tup_inserted": row[6],
+                    "tup_updated": row[7],
+                    "tup_deleted": row[8],
+                    "temp_files": row[9],
+                    "temp_bytes": row[10],
+                    "deadlocks": row[11],
+                    "blk_read_time_ms": row[12],
+                    "blk_write_time_ms": row[13],
+                }
+        return {}
+
+    def _get_bgwriter_stats(self) -> dict:
+        """Get background writer and checkpoint statistics."""
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    checkpoints_timed,
+                    checkpoints_req,
+                    checkpoint_write_time,
+                    checkpoint_sync_time,
+                    buffers_checkpoint,
+                    buffers_clean,
+                    buffers_backend,
+                    buffers_backend_fsync,
+                    buffers_alloc
+                FROM pg_stat_bgwriter
+            """)
+            row = cur.fetchone()
+            if row:
+                return {
+                    "checkpoints_timed": row[0],
+                    "checkpoints_req": row[1],
+                    "checkpoint_write_time_ms": row[2],
+                    "checkpoint_sync_time_ms": row[3],
+                    "buffers_checkpoint": row[4],
+                    "buffers_clean": row[5],
+                    "buffers_backend": row[6],
+                    "buffers_backend_fsync": row[7],
+                    "buffers_alloc": row[8],
+                }
+        return {}
+
+    def _get_index_stats(self, table_name: str) -> dict:
+        """Get statistics for the vector index on the specified table."""
+        with self.conn.cursor() as cur:
+            # Get index usage stats
+            cur.execute("""
+                SELECT
+                    indexrelname,
+                    idx_scan,
+                    idx_tup_read,
+                    idx_tup_fetch,
+                    pg_relation_size(indexrelid) as index_size_bytes
+                FROM pg_stat_user_indexes
+                WHERE schemaname = 'public'
+                  AND (indexrelname LIKE %s OR indexrelname LIKE %s)
+            """, (f"{table_name}%", f"%embedding%",))
+
+            indexes = {}
+            for row in cur.fetchall():
+                idx_name = row[0]
+                indexes[idx_name] = {
+                    "idx_scan": row[1],
+                    "idx_tup_read": row[2],
+                    "idx_tup_fetch": row[3],
+                    "index_size_bytes": row[4],
+                }
+
+            # Get index IO stats
+            cur.execute("""
+                SELECT
+                    indexrelname,
+                    idx_blks_read,
+                    idx_blks_hit
+                FROM pg_statio_user_indexes
+                WHERE schemaname = 'public'
+                  AND (indexrelname LIKE %s OR indexrelname LIKE %s)
+            """, (f"{table_name}%", f"%embedding%",))
+
+            for row in cur.fetchall():
+                idx_name = row[0]
+                if idx_name in indexes:
+                    blks_read, blks_hit = row[1], row[2]
+                    hit_ratio = blks_hit / (blks_hit + blks_read) if (blks_hit + blks_read) > 0 else 0
+                    indexes[idx_name].update({
+                        "idx_blks_read": blks_read,
+                        "idx_blks_hit": blks_hit,
+                        "idx_cache_hit_ratio": round(hit_ratio, 4),
+                    })
+
+            return indexes
+
+    def _get_table_stats(self, table_name: str) -> dict:
+        """Get statistics for the specified table."""
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    seq_scan,
+                    seq_tup_read,
+                    idx_scan,
+                    idx_tup_fetch,
+                    n_tup_ins,
+                    n_tup_upd,
+                    n_tup_del,
+                    n_live_tup,
+                    n_dead_tup,
+                    pg_relation_size(%s) as table_size_bytes,
+                    pg_total_relation_size(%s) as total_size_bytes
+                FROM pg_stat_user_tables
+                WHERE schemaname = 'public' AND relname = %s
+            """, (table_name, table_name, table_name))
+
+            row = cur.fetchone()
+            if row:
+                return {
+                    "seq_scan": row[0],
+                    "seq_tup_read": row[1],
+                    "idx_scan": row[2],
+                    "idx_tup_fetch": row[3],
+                    "n_tup_ins": row[4],
+                    "n_tup_upd": row[5],
+                    "n_tup_del": row[6],
+                    "n_live_tup": row[7],
+                    "n_dead_tup": row[8],
+                    "table_size_bytes": row[9],
+                    "total_size_bytes": row[10],
+                }
+        return {}
+
+    def _get_table_io_stats(self, table_name: str) -> dict:
+        """Get IO statistics for the specified table."""
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    heap_blks_read,
+                    heap_blks_hit,
+                    idx_blks_read,
+                    idx_blks_hit,
+                    toast_blks_read,
+                    toast_blks_hit
+                FROM pg_statio_user_tables
+                WHERE schemaname = 'public' AND relname = %s
+            """, (table_name,))
+
+            row = cur.fetchone()
+            if row:
+                heap_read, heap_hit = row[0] or 0, row[1] or 0
+                heap_ratio = heap_hit / (heap_hit + heap_read) if (heap_hit + heap_read) > 0 else 0
+                return {
+                    "heap_blks_read": heap_read,
+                    "heap_blks_hit": heap_hit,
+                    "heap_cache_hit_ratio": round(heap_ratio, 4),
+                    "table_idx_blks_read": row[2] or 0,
+                    "table_idx_blks_hit": row[3] or 0,
+                    "toast_blks_read": row[4] or 0,
+                    "toast_blks_hit": row[5] or 0,
+                }
+        return {}
+
+    def _get_active_connections(self) -> dict:
+        """Get connection and activity statistics."""
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    count(*) FILTER (WHERE state = 'active') as active,
+                    count(*) FILTER (WHERE state = 'idle') as idle,
+                    count(*) FILTER (WHERE state = 'idle in transaction') as idle_in_transaction,
+                    count(*) FILTER (WHERE wait_event_type IS NOT NULL) as waiting,
+                    count(*) as total
+                FROM pg_stat_activity
+                WHERE datname = current_database()
+            """)
+            row = cur.fetchone()
+            if row:
+                return {
+                    "connections_active": row[0],
+                    "connections_idle": row[1],
+                    "connections_idle_in_transaction": row[2],
+                    "connections_waiting": row[3],
+                    "connections_total": row[4],
+                }
+        return {}
+
+    def _get_wait_events(self) -> dict:
+        """Get current wait event distribution."""
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    wait_event_type,
+                    wait_event,
+                    count(*)
+                FROM pg_stat_activity
+                WHERE datname = current_database()
+                  AND state = 'active'
+                  AND wait_event IS NOT NULL
+                GROUP BY wait_event_type, wait_event
+                ORDER BY count(*) DESC
+                LIMIT 10
+            """)
+
+            wait_events = []
+            for row in cur.fetchall():
+                wait_events.append({
+                    "type": row[0],
+                    "event": row[1],
+                    "count": row[2],
+                })
+            return {"top_wait_events": wait_events}
+
+    def capture_snapshot(self, phase: str, table_name: Optional[str] = None) -> dict:
+        """
+        Capture a complete stats snapshot at a phase boundary.
+
+        Args:
+            phase: Name of the phase (e.g., 'baseline', 'after_load', 'after_index')
+            table_name: Optional table name for table/index specific stats
+
+        Returns:
+            Dictionary containing all captured statistics
+        """
+        snapshot = {
+            "phase": phase,
+            "timestamp": datetime.now().isoformat(),
+            "database": self._get_database_stats(),
+            "bgwriter": self._get_bgwriter_stats(),
+            "connections": self._get_active_connections(),
+            "wait_events": self._get_wait_events(),
+        }
+
+        if table_name:
+            snapshot["table"] = self._get_table_stats(table_name)
+            snapshot["table_io"] = self._get_table_io_stats(table_name)
+            snapshot["indexes"] = self._get_index_stats(table_name)
+
+        self.snapshots[phase] = snapshot
+        return snapshot
+
+    def compute_delta(self, phase_before: str, phase_after: str) -> dict:
+        """
+        Compute the difference between two snapshots.
+
+        Args:
+            phase_before: Name of the earlier phase
+            phase_after: Name of the later phase
+
+        Returns:
+            Dictionary containing deltas for numeric metrics
+        """
+        if phase_before not in self.snapshots or phase_after not in self.snapshots:
+            return {}
+
+        before = self.snapshots[phase_before]
+        after = self.snapshots[phase_after]
+
+        delta = {
+            "phases": f"{phase_before} -> {phase_after}",
+            "database": {},
+            "bgwriter": {},
+            "table": {},
+        }
+
+        # Compute database deltas
+        for key in ["blks_read", "blks_hit", "xact_commit", "tup_inserted",
+                    "temp_files", "temp_bytes", "deadlocks"]:
+            if key in before.get("database", {}) and key in after.get("database", {}):
+                delta["database"][key] = after["database"][key] - before["database"][key]
+
+        # Cache hit ratio is a point-in-time metric, show both
+        if "cache_hit_ratio" in after.get("database", {}):
+            delta["database"]["cache_hit_ratio_after"] = after["database"]["cache_hit_ratio"]
+
+        # Compute bgwriter deltas
+        for key in ["checkpoints_timed", "checkpoints_req", "buffers_checkpoint",
+                    "buffers_clean", "buffers_backend", "checkpoint_write_time_ms"]:
+            if key in before.get("bgwriter", {}) and key in after.get("bgwriter", {}):
+                delta["bgwriter"][key] = after["bgwriter"][key] - before["bgwriter"][key]
+
+        # Compute table deltas if available
+        if before.get("table") and after.get("table"):
+            for key in ["seq_scan", "idx_scan", "n_tup_ins"]:
+                if key in before["table"] and key in after["table"]:
+                    delta["table"][key] = after["table"][key] - before["table"][key]
+
+        return delta
+
+    def get_summary(self) -> dict:
+        """
+        Get a summary of all captured snapshots and key deltas.
+
+        Returns:
+            Dictionary with summary statistics
+        """
+        if not self.snapshots:
+            return {}
+
+        phases = list(self.snapshots.keys())
+        summary = {
+            "phases_captured": phases,
+            "snapshots": self.snapshots,
+            "deltas": {},
+        }
+
+        # Compute deltas between consecutive phases
+        for i in range(len(phases) - 1):
+            delta_name = f"{phases[i]}_to_{phases[i+1]}"
+            summary["deltas"][delta_name] = self.compute_delta(phases[i], phases[i+1])
+
+        # Compute overall delta (first to last)
+        if len(phases) >= 2:
+            summary["deltas"]["overall"] = self.compute_delta(phases[0], phases[-1])
+
+        return summary
+
+    def format_for_report(self) -> str:
+        """
+        Format the collected stats as markdown for the report.
+
+        Returns:
+            Markdown-formatted string
+        """
+        summary = self.get_summary()
+        if not summary:
+            return ""
+
+        lines = [
+            "## PostgreSQL Statistics",
+            "",
+        ]
+
+        # Show final snapshot stats
+        if summary["snapshots"]:
+            last_phase = list(summary["snapshots"].keys())[-1]
+            last_snapshot = summary["snapshots"][last_phase]
+
+            lines.extend([
+                f"### Final State ({last_phase})",
+                "",
+                "| Metric | Value |",
+                "|--------|-------|",
+            ])
+
+            db = last_snapshot.get("database", {})
+            if db:
+                lines.append(f"| Cache Hit Ratio | {db.get('cache_hit_ratio', 0):.2%} |")
+                lines.append(f"| Blocks Read | {db.get('blks_read', 0):,} |")
+                lines.append(f"| Blocks Hit | {db.get('blks_hit', 0):,} |")
+                lines.append(f"| Temp Files | {db.get('temp_files', 0):,} |")
+                lines.append(f"| Deadlocks | {db.get('deadlocks', 0):,} |")
+
+            bgw = last_snapshot.get("bgwriter", {})
+            if bgw:
+                lines.append(f"| Checkpoints (timed) | {bgw.get('checkpoints_timed', 0):,} |")
+                lines.append(f"| Checkpoints (requested) | {bgw.get('checkpoints_req', 0):,} |")
+                lines.append(f"| Buffers Written (checkpoint) | {bgw.get('buffers_checkpoint', 0):,} |")
+
+        # Show overall delta
+        if "overall" in summary.get("deltas", {}):
+            overall = summary["deltas"]["overall"]
+            lines.extend([
+                "",
+                "### Changes During Benchmark",
+                "",
+                "| Metric | Delta |",
+                "|--------|-------|",
+            ])
+
+            db_delta = overall.get("database", {})
+            if db_delta:
+                lines.append(f"| Blocks Read | +{db_delta.get('blks_read', 0):,} |")
+                lines.append(f"| Blocks Hit | +{db_delta.get('blks_hit', 0):,} |")
+                lines.append(f"| Transactions | +{db_delta.get('xact_commit', 0):,} |")
+                lines.append(f"| Rows Inserted | +{db_delta.get('tup_inserted', 0):,} |")
+
+            bgw_delta = overall.get("bgwriter", {})
+            if bgw_delta:
+                lines.append(f"| Checkpoints | +{bgw_delta.get('checkpoints_req', 0) + bgw_delta.get('checkpoints_timed', 0):,} |")
+                lines.append(f"| Checkpoint Write Time | +{bgw_delta.get('checkpoint_write_time_ms', 0):,.0f} ms |")
+
+        lines.append("")
+        return "\n".join(lines)

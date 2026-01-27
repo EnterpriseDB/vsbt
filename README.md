@@ -266,6 +266,24 @@ Each benchmark run generates:
 
 ## Utility Scripts
 
+### Compare Benchmark Runs
+
+Compare results between different benchmark runs:
+
+```bash
+# List all available runs
+python compare_runs.py --list
+
+# Show details for a specific run
+python compare_runs.py --show 5
+
+# Compare two runs
+python compare_runs.py --compare 3 7
+
+# Export comparison as CSV
+python compare_runs.py --compare 3 7 --format csv
+```
+
 ### Reduce Free Memory
 
 Simulate memory-constrained environments:
@@ -300,6 +318,7 @@ vector-search/
 ├── common.py                 # Base test suite class
 ├── datasets.py               # Dataset download and loading
 ├── results.py                # Results management and visualization
+├── compare_runs.py           # Historical benchmark comparison utility
 ├── pgvector_suite.py         # pgvector HNSW benchmarks
 ├── vectorchord_suite.py      # VectorChord IVF benchmarks
 ├── pgpu_suite.py             # GPU-accelerated benchmarks
@@ -313,7 +332,10 @@ vector-search/
 │   ├── pgpu_suite_100m.yaml
 │   └── ...
 ├── monitor/
-│   └── os_stats.py           # System monitoring
+│   ├── __init__.py           # Monitor package
+│   ├── os_stats.py           # Legacy OS monitoring
+│   ├── system_monitor.py     # Portable system metrics (psutil)
+│   └── pg_stats.py           # PostgreSQL statistics collector
 ├── utils/
 │   ├── convert_deep1b.py     # Deep1B format converter
 │   └── verify_deep1B.py      # File integrity checker

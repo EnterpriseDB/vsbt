@@ -1,0 +1,29 @@
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Data files (downloaded datasets)
+*.hdf5
+*.npy
+*.h5
+
+# Results (generated)
+results/
+
+# OS
+.DS_Store
+Thumbs.db
