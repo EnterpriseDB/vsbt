@@ -332,15 +332,15 @@ class PGStatsCollector:
 
             cur.execute("""
                 SELECT
-                    seq_scan,
-                    seq_tup_read,
-                    idx_scan,
-                    idx_tup_fetch,
-                    n_tup_ins,
-                    n_tup_upd,
-                    n_tup_del,
-                    n_live_tup,
-                    n_dead_tup,
+                    COALESCE(seq_scan, 0),
+                    COALESCE(seq_tup_read, 0),
+                    COALESCE(idx_scan, 0),
+                    COALESCE(idx_tup_fetch, 0),
+                    COALESCE(n_tup_ins, 0),
+                    COALESCE(n_tup_upd, 0),
+                    COALESCE(n_tup_del, 0),
+                    COALESCE(n_live_tup, 0),
+                    COALESCE(n_dead_tup, 0),
                     pg_relation_size(%s) as table_size_bytes,
                     pg_total_relation_size(%s) as total_size_bytes
                 FROM pg_stat_user_tables
@@ -500,7 +500,10 @@ class PGStatsCollector:
         for key in ["blks_read", "blks_hit", "xact_commit", "tup_inserted",
                     "temp_files", "temp_bytes", "deadlocks"]:
             if key in before.get("database", {}) and key in after.get("database", {}):
-                delta["database"][key] = after["database"][key] - before["database"][key]
+                before_val = before["database"][key]
+                after_val = after["database"][key]
+                if before_val is not None and after_val is not None:
+                    delta["database"][key] = after_val - before_val
 
         # Cache hit ratio is a point-in-time metric, show both
         if "cache_hit_ratio" in after.get("database", {}):
@@ -510,13 +513,19 @@ class PGStatsCollector:
         for key in ["checkpoints_timed", "checkpoints_req", "buffers_checkpoint",
                     "buffers_clean", "buffers_backend", "checkpoint_write_time_ms"]:
             if key in before.get("bgwriter", {}) and key in after.get("bgwriter", {}):
-                delta["bgwriter"][key] = after["bgwriter"][key] - before["bgwriter"][key]
+                before_val = before["bgwriter"][key]
+                after_val = after["bgwriter"][key]
+                if before_val is not None and after_val is not None:
+                    delta["bgwriter"][key] = after_val - before_val
 
         # Compute table deltas if available
         if before.get("table") and after.get("table"):
             for key in ["seq_scan", "idx_scan", "n_tup_ins"]:
                 if key in before["table"] and key in after["table"]:
-                    delta["table"][key] = after["table"][key] - before["table"][key]
+                    before_val = before["table"][key]
+                    after_val = after["table"][key]
+                    if before_val is not None and after_val is not None:
+                        delta["table"][key] = after_val - before_val
 
         return delta
 
