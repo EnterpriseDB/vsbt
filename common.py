@@ -706,7 +706,10 @@ class TestSuite:
         # Initialize PG stats collector
         conn = self.create_connection()
         self.pg_stats_collector = PGStatsCollector(conn)
-        self.pg_stats_collector.capture_snapshot("baseline", table_name)
+
+        # Only capture baseline if table already exists (skip_add_embeddings case)
+        if self.skip_add_embeddings:
+            self.pg_stats_collector.capture_snapshot("baseline", table_name)
 
         # 1. LOAD DATASET (Unified)
         ds = datasets.get_dataset(dataset_name)

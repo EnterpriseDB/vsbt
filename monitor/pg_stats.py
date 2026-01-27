@@ -320,6 +320,16 @@ class PGStatsCollector:
     def _get_table_stats(self, table_name: str) -> dict:
         """Get statistics for the specified table."""
         with self.conn.cursor() as cur:
+            # Check if table exists first
+            cur.execute("""
+                SELECT EXISTS (
+                    SELECT 1 FROM information_schema.tables
+                    WHERE table_schema = 'public' AND table_name = %s
+                )
+            """, (table_name,))
+            if not cur.fetchone()[0]:
+                return {}
+
             cur.execute("""
                 SELECT
                     seq_scan,
