@@ -21,6 +21,26 @@ import pandas as pd
 import psutil
 
 
+def format_markdown_table(headers: list[str], rows: list[list[str]]) -> list[str]:
+    """Format a markdown table with proper column alignment."""
+    num_cols = len(headers)
+    widths = [len(h) for h in headers]
+    for row in rows:
+        for i, cell in enumerate(row):
+            if i < num_cols:
+                widths[i] = max(widths[i], len(str(cell)))
+
+    lines = []
+    header_cells = [h.ljust(widths[i]) for i, h in enumerate(headers)]
+    lines.append("| " + " | ".join(header_cells) + " |")
+    sep_cells = ["-" * widths[i] for i in range(num_cols)]
+    lines.append("|-" + "-|-".join(sep_cells) + "-|")
+    for row in rows:
+        data_cells = [str(cell).ljust(widths[i]) for i, cell in enumerate(row)]
+        lines.append("| " + " | ".join(data_cells) + " |")
+    return lines
+
+
 def is_local_database(url: str) -> bool:
     """
     Check if the database URL points to a local database.
@@ -164,14 +184,61 @@ class SystemMonitor:
     OS-specific tools like iostat.
     """
 
-    def __init__(self, results_dir: str = "./results"):
+    def __init__(self, results_dir: str = "./results", devices: Optional[list[str]] = None):
         self.results_dir = Path(results_dir)
         self.results_dir.mkdir(parents=True, exist_ok=True)
 
+        self.devices = devices  # Specific devices to monitor (None = aggregate all)
         self.samples = []
         self.phase_markers = []  # [(timestamp, phase_name), ...]
         self._start_time = None
         self._prev_disk_io = None
+
+    def _get_disk_io_counters(self):
+        """
+        Get disk IO counters for configured devices.
+
+        If specific devices are configured, returns aggregated counters
+        for those devices only. Otherwise returns system-wide counters.
+        """
+        if not self.devices:
+            # No specific devices - use system-wide aggregate
+            return psutil.disk_io_counters()
+
+        # Get per-device counters and aggregate for our devices
+        all_counters = psutil.disk_io_counters(perdisk=True)
+        if not all_counters:
+            return None
+
+        # Aggregate counters for our specific devices
+        read_count = 0
+        write_count = 0
+        read_bytes = 0
+        write_bytes = 0
+        found_devices = []
+
+        for device in self.devices:
+            if device in all_counters:
+                counters = all_counters[device]
+                read_count += counters.read_count
+                write_count += counters.write_count
+                read_bytes += counters.read_bytes
+                write_bytes += counters.write_bytes
+                found_devices.append(device)
+
+        if not found_devices:
+            # None of our devices found - fall back to aggregate
+            return psutil.disk_io_counters()
+
+        # Return a named tuple-like object with the aggregated values
+        class AggregatedDiskIO:
+            pass
+        result = AggregatedDiskIO()
+        result.read_count = read_count
+        result.write_count = write_count
+        result.read_bytes = read_bytes
+        result.write_bytes = write_bytes
+        return result
 
     def _get_disk_io_rates(self) -> dict:
         """
@@ -179,8 +246,16 @@ class SystemMonitor:
 
         Returns rates in ops/sec and bytes/sec.
         """
-        current = psutil.disk_io_counters()
+        current = self._get_disk_io_counters()
         current_time = time.time()
+
+        if current is None:
+            return {
+                "read_iops": 0,
+                "write_iops": 0,
+                "read_bytes_sec": 0,
+                "write_bytes_sec": 0,
+            }
 
         if self._prev_disk_io is None:
             self._prev_disk_io = (current, current_time)
@@ -397,28 +472,43 @@ class SystemMonitor:
             "",
             "### CPU",
             "",
-            "| Metric | Value |",
-            "|--------|-------|",
-            f"| Average | {stats['cpu_avg']:.1f}% |",
-            f"| Maximum | {stats['cpu_max']:.1f}% |",
+        ]
+        lines.extend(format_markdown_table(
+            ["Metric", "Value"],
+            [
+                ["Average", f"{stats['cpu_avg']:.1f}%"],
+                ["Maximum", f"{stats['cpu_max']:.1f}%"],
+            ]
+        ))
+
+        lines.extend([
             "",
             "### Memory",
             "",
-            "| Metric | Value |",
-            "|--------|-------|",
-            f"| Average | {stats['memory_avg_percent']:.1f}% |",
-            f"| Maximum | {stats['memory_max_percent']:.1f}% ({stats['memory_max_gb']:.1f} GB) |",
+        ])
+        lines.extend(format_markdown_table(
+            ["Metric", "Value"],
+            [
+                ["Average", f"{stats['memory_avg_percent']:.1f}%"],
+                ["Maximum", f"{stats['memory_max_percent']:.1f}% ({stats['memory_max_gb']:.1f} GB)"],
+            ]
+        ))
+
+        lines.extend([
             "",
             "### Disk IO",
             "",
-            "| Metric | Read | Write |",
-            "|--------|------|-------|",
-            f"| IOPS (avg) | {stats['disk_read_iops_avg']:.0f} | {stats['disk_write_iops_avg']:.0f} |",
-            f"| IOPS (max) | {stats['disk_read_iops_max']:.0f} | {stats['disk_write_iops_max']:.0f} |",
-            f"| Throughput avg (MB/s) | {stats['disk_read_mb_sec_avg']:.1f} | {stats['disk_write_mb_sec_avg']:.1f} |",
-            f"| Throughput max (MB/s) | {stats['disk_read_mb_sec_max']:.1f} | {stats['disk_write_mb_sec_max']:.1f} |",
-            "",
-        ]
+        ])
+        lines.extend(format_markdown_table(
+            ["Metric", "Read", "Write"],
+            [
+                ["IOPS (avg)", f"{stats['disk_read_iops_avg']:.0f}", f"{stats['disk_write_iops_avg']:.0f}"],
+                ["IOPS (max)", f"{stats['disk_read_iops_max']:.0f}", f"{stats['disk_write_iops_max']:.0f}"],
+                ["Throughput avg (MB/s)", f"{stats['disk_read_mb_sec_avg']:.1f}", f"{stats['disk_write_mb_sec_avg']:.1f}"],
+                ["Throughput max (MB/s)", f"{stats['disk_read_mb_sec_max']:.1f}", f"{stats['disk_write_mb_sec_max']:.1f}"],
+            ]
+        ))
+        lines.append("")
 
         return "\n".join(lines)
 

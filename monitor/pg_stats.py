@@ -9,6 +9,26 @@ from datetime import datetime
 from typing import Optional
 
 
+def format_markdown_table(headers: list[str], rows: list[list[str]]) -> list[str]:
+    """Format a markdown table with proper column alignment."""
+    num_cols = len(headers)
+    widths = [len(h) for h in headers]
+    for row in rows:
+        for i, cell in enumerate(row):
+            if i < num_cols:
+                widths[i] = max(widths[i], len(str(cell)))
+
+    lines = []
+    header_cells = [h.ljust(widths[i]) for i, h in enumerate(headers)]
+    lines.append("| " + " | ".join(header_cells) + " |")
+    sep_cells = ["-" * widths[i] for i in range(num_cols)]
+    lines.append("|-" + "-|-".join(sep_cells) + "-|")
+    for row in rows:
+        data_cells = [str(cell).ljust(widths[i]) for i, cell in enumerate(row)]
+        lines.append("| " + " | ".join(data_cells) + " |")
+    return lines
+
+
 class PGStatsCollector:
     """
     Collect PostgreSQL stats at benchmark phase boundaries.
@@ -90,20 +110,19 @@ class PGStatsCollector:
         if not settings:
             return ""
 
+        rows = []
+        for s in settings:
+            value = f"{s['setting']}{s['unit']}" if s['unit'] else s['setting']
+            default = f"{s['boot_val']}{s['unit']}" if s['unit'] else s['boot_val']
+            rows.append([s['name'], value, default, s['source']])
+
         lines = [
             "## PostgreSQL Configuration",
             "",
             "Settings modified from defaults:",
             "",
-            "| Setting | Value | Default | Source |",
-            "|---------|-------|---------|--------|",
         ]
-
-        for s in settings:
-            value = f"{s['setting']}{s['unit']}" if s['unit'] else s['setting']
-            default = f"{s['boot_val']}{s['unit']}" if s['unit'] else s['boot_val']
-            lines.append(f"| {s['name']} | {value} | {default} | {s['source']} |")
-
+        lines.extend(format_markdown_table(["Setting", "Value", "Default", "Source"], rows))
         lines.append("")
         return "\n".join(lines)
 
@@ -547,26 +566,31 @@ class PGStatsCollector:
             last_phase = list(summary["snapshots"].keys())[-1]
             last_snapshot = summary["snapshots"][last_phase]
 
-            lines.extend([
-                f"### Final State ({last_phase})",
-                "",
-                "| Metric | Value |",
-                "|--------|-------|",
-            ])
-
+            final_rows = []
             db = last_snapshot.get("database", {})
             if db:
-                lines.append(f"| Cache Hit Ratio | {db.get('cache_hit_ratio', 0):.2%} |")
-                lines.append(f"| Blocks Read | {db.get('blks_read', 0):,} |")
-                lines.append(f"| Blocks Hit | {db.get('blks_hit', 0):,} |")
-                lines.append(f"| Temp Files | {db.get('temp_files', 0):,} |")
-                lines.append(f"| Deadlocks | {db.get('deadlocks', 0):,} |")
+                final_rows.extend([
+                    ["Cache Hit Ratio", f"{db.get('cache_hit_ratio', 0):.2%}"],
+                    ["Blocks Read", f"{db.get('blks_read', 0):,}"],
+                    ["Blocks Hit", f"{db.get('blks_hit', 0):,}"],
+                    ["Temp Files", f"{db.get('temp_files', 0):,}"],
+                    ["Deadlocks", f"{db.get('deadlocks', 0):,}"],
+                ])
 
             bgw = last_snapshot.get("bgwriter", {})
             if bgw:
-                lines.append(f"| Checkpoints (timed) | {bgw.get('checkpoints_timed', 0):,} |")
-                lines.append(f"| Checkpoints (requested) | {bgw.get('checkpoints_req', 0):,} |")
-                lines.append(f"| Buffers Written (checkpoint) | {bgw.get('buffers_checkpoint', 0):,} |")
+                final_rows.extend([
+                    ["Checkpoints (timed)", f"{bgw.get('checkpoints_timed', 0):,}"],
+                    ["Checkpoints (requested)", f"{bgw.get('checkpoints_req', 0):,}"],
+                    ["Buffers Written (checkpoint)", f"{bgw.get('buffers_checkpoint', 0):,}"],
+                ])
+
+            if final_rows:
+                lines.extend([
+                    f"### Final State ({last_phase})",
+                    "",
+                ])
+                lines.extend(format_markdown_table(["Metric", "Value"], final_rows))
 
         # Show per-phase deltas
         deltas = summary.get("deltas", {})
@@ -583,23 +607,29 @@ class PGStatsCollector:
         # Show phase-by-phase breakdown
         phase_deltas = [(k, v) for k, v in deltas.items() if k != "overall"]
         if phase_deltas:
-            lines.extend([
-                "",
-                "### Activity by Phase",
-                "",
-                "| Phase | Blocks Read | Blocks Hit | Transactions | Checkpoints |",
-                "|-------|-------------|------------|--------------|-------------|",
-            ])
-
+            phase_rows = []
             for delta_key, delta in phase_deltas:
                 phase_name = phase_names.get(delta_key, delta_key)
                 db = delta.get("database", {})
                 bgw = delta.get("bgwriter", {})
                 checkpoints = bgw.get("checkpoints_req", 0) + bgw.get("checkpoints_timed", 0)
-                lines.append(
-                    f"| {phase_name} | {db.get('blks_read', 0):,} | {db.get('blks_hit', 0):,} | "
-                    f"{db.get('xact_commit', 0):,} | {checkpoints:,} |"
-                )
+                phase_rows.append([
+                    phase_name,
+                    f"{db.get('blks_read', 0):,}",
+                    f"{db.get('blks_hit', 0):,}",
+                    f"{db.get('xact_commit', 0):,}",
+                    f"{checkpoints:,}",
+                ])
+
+            lines.extend([
+                "",
+                "### Activity by Phase",
+                "",
+            ])
+            lines.extend(format_markdown_table(
+                ["Phase", "Blocks Read", "Blocks Hit", "Transactions", "Checkpoints"],
+                phase_rows
+            ))
 
         # Show overall totals
         if "overall" in deltas:
@@ -607,25 +637,28 @@ class PGStatsCollector:
             db_delta = overall.get("database", {})
             bgw_delta = overall.get("bgwriter", {})
 
-            lines.extend([
-                "",
-                "### Total Changes",
-                "",
-                "| Metric | Value |",
-                "|--------|-------|",
-            ])
-
+            total_rows = []
             if db_delta:
-                lines.append(f"| Blocks Read | {db_delta.get('blks_read', 0):,} |")
-                lines.append(f"| Blocks Hit | {db_delta.get('blks_hit', 0):,} |")
-                lines.append(f"| Transactions | {db_delta.get('xact_commit', 0):,} |")
-                lines.append(f"| Rows Inserted | {db_delta.get('tup_inserted', 0):,} |")
+                total_rows.extend([
+                    ["Blocks Read", f"{db_delta.get('blks_read', 0):,}"],
+                    ["Blocks Hit", f"{db_delta.get('blks_hit', 0):,}"],
+                    ["Transactions", f"{db_delta.get('xact_commit', 0):,}"],
+                    ["Rows Inserted", f"{db_delta.get('tup_inserted', 0):,}"],
+                ])
 
             if bgw_delta:
                 total_checkpoints = bgw_delta.get('checkpoints_req', 0) + bgw_delta.get('checkpoints_timed', 0)
-                lines.append(f"| Checkpoints | {total_checkpoints:,} |")
+                total_rows.append(["Checkpoints", f"{total_checkpoints:,}"])
                 if bgw_delta.get('checkpoint_write_time_ms', 0) > 0:
-                    lines.append(f"| Checkpoint Write Time | {bgw_delta.get('checkpoint_write_time_ms', 0):,.0f} ms |")
+                    total_rows.append(["Checkpoint Write Time", f"{bgw_delta.get('checkpoint_write_time_ms', 0):,.0f} ms"])
+
+            if total_rows:
+                lines.extend([
+                    "",
+                    "### Total Changes",
+                    "",
+                ])
+                lines.extend(format_markdown_table(["Metric", "Value"], total_rows))
 
         lines.append("")
         return "\n".join(lines)

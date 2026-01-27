@@ -667,7 +667,10 @@ class TestSuite:
 
         # Initialize system monitor only for local databases
         if self.is_local_db:
-            self.system_monitor = SystemMonitor(results_dir=f"./results/{name}")
+            self.system_monitor = SystemMonitor(
+                results_dir=f"./results/{name}",
+                devices=self.devices if self.devices else None
+            )
             self.system_monitor.capture_sample()  # Initial sample
         else:
             self.system_monitor = None

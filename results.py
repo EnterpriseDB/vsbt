@@ -16,6 +16,32 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
+def format_markdown_table(headers: list[str], rows: list[list[str]]) -> list[str]:
+    """Format a markdown table with proper column alignment."""
+    # Calculate max width for each column
+    num_cols = len(headers)
+    widths = [len(h) for h in headers]
+    for row in rows:
+        for i, cell in enumerate(row):
+            if i < num_cols:
+                widths[i] = max(widths[i], len(str(cell)))
+
+    # Build formatted lines
+    lines = []
+    # Header row
+    header_cells = [h.ljust(widths[i]) for i, h in enumerate(headers)]
+    lines.append("| " + " | ".join(header_cells) + " |")
+    # Separator row
+    sep_cells = ["-" * widths[i] for i in range(num_cols)]
+    lines.append("|-" + "-|-".join(sep_cells) + "-|")
+    # Data rows
+    for row in rows:
+        data_cells = [str(cell).ljust(widths[i]) for i, cell in enumerate(row)]
+        lines.append("| " + " | ".join(data_cells) + " |")
+
+    return lines
+
+
 class ResultsManager:
     """
     Manages benchmark results storage, consolidation, and visualization.
@@ -362,32 +388,47 @@ class ResultsManager:
             "",
             "## Configuration",
             "",
-            "| Parameter | Value |",
-            "|-----------|-------|",
-            f"| Dataset | {config.get('dataset', 'N/A')} |",
-            f"| Metric | {config.get('metric', 'N/A')} |",
-            f"| Workers | {config.get('workers', 'N/A')} |",
-            f"| Query Clients | {query_clients} |",
-            f"| Top-K | {config.get('top', 'N/A')} |",
+        ]
+
+        # Build configuration table rows
+        config_rows = [
+            ["Dataset", str(config.get("dataset", "N/A"))],
+            ["Metric", str(config.get("metric", "N/A"))],
+            ["Workers", str(config.get("workers", "N/A"))],
+            ["Query Clients", str(query_clients)],
+            ["Top-K", str(config.get("top", "N/A"))],
         ]
 
         # Add suite-specific config
         if suite_type == "pgvector":
-            lines.extend([
-                f"| M | {config.get('m', 'N/A')} |",
-                f"| EF Construction | {config.get('efConstruction', 'N/A')} |",
+            config_rows.extend([
+                ["M", str(config.get("m", "N/A"))],
+                ["EF Construction", str(config.get("efConstruction", "N/A"))],
             ])
         elif suite_type in ("vectorchord", "pgpu"):
-            lines.extend([
-                f"| Lists | {config.get('lists', results.get('lists', 'N/A'))} |",
-                f"| Sampling Factor | {config.get('samplingFactor', 'N/A')} |",
-                f"| Residual Quantization | {config.get('residual_quantization', 'N/A')} |",
+            config_rows.extend([
+                ["Lists", str(config.get("lists", results.get("lists", "N/A")))],
+                ["Sampling Factor", str(config.get("samplingFactor", "N/A"))],
+                ["Residual Quantization", str(config.get("residual_quantization", "N/A"))],
             ])
             if suite_type == "vectorchord":
-                lines.extend([
-                    f"| Build Threads | {results.get('build_threads', 'N/A')} |",
-                    f"| K-means Hierarchical | {config.get('kmeans_hierarchical', 'N/A')} |",
+                config_rows.extend([
+                    ["Build Threads", str(results.get("build_threads", "N/A"))],
+                    ["K-means Hierarchical", str(config.get("kmeans_hierarchical", "N/A"))],
                 ])
+
+        lines.extend(format_markdown_table(["Parameter", "Value"], config_rows))
+
+        # Build metrics table
+        build_rows = [
+            ["Load Time", f"{results.get('load_time', 'N/A')}s"],
+        ]
+        if results.get("clustering_time"):
+            build_rows.append(["Clustering Time", str(results.get("clustering_time"))])
+        build_rows.extend([
+            ["Index Build Time", f"{results.get('index_build_time', 'N/A')}s"],
+            ["Index Size", str(results.get("index_size", "N/A"))],
+        ])
 
         lines.extend([
             "",
@@ -395,18 +436,8 @@ class ResultsManager:
             "",
             "## Build Metrics",
             "",
-            "| Metric | Value |",
-            "|--------|-------|",
-            f"| Load Time | {results.get('load_time', 'N/A')}s |",
         ])
-
-        if results.get("clustering_time"):
-            lines.append(f"| Clustering Time | {results.get('clustering_time')} |")
-
-        lines.extend([
-            f"| Index Build Time | {results.get('index_build_time', 'N/A')}s |",
-            f"| Index Size | {results.get('index_size', 'N/A')} |",
-        ])
+        lines.extend(format_markdown_table(["Metric", "Value"], build_rows))
 
         # Add build time chart
         if build_time_chart:
@@ -423,19 +454,8 @@ class ResultsManager:
             "",
         ])
 
-        # Results table header
-        if suite_type == "pgvector":
-            lines.extend([
-                "| EF Search | Recall | QPS | P50 (ms) | P99 (ms) |",
-                "|-----------|--------|-----|----------|----------|",
-            ])
-        else:
-            lines.extend([
-                "| nprob | epsilon | Recall | QPS | P50 (ms) | P99 (ms) |",
-                "|-------|---------|--------|-----|----------|----------|",
-            ])
-
-        # Results table rows
+        # Build benchmark results table
+        bench_rows = []
         for bench_name, bench_config in config.get("benchmarks", {}).items():
             if bench_name in results:
                 bench_results = results[bench_name]
@@ -445,14 +465,33 @@ class ResultsManager:
                 p99 = bench_results.get("p99_latency", 0)
 
                 if suite_type == "pgvector":
-                    lines.append(
-                        f"| {bench_config.get('efSearch', 'N/A')} | {recall:.4f} | {qps:.2f} | {p50:.2f} | {p99:.2f} |"
-                    )
+                    bench_rows.append([
+                        str(bench_config.get("efSearch", "N/A")),
+                        f"{recall:.4f}",
+                        f"{qps:.2f}",
+                        f"{p50:.2f}",
+                        f"{p99:.2f}",
+                    ])
                 else:
-                    lines.append(
-                        f"| {bench_config.get('nprob', 'N/A')} | {bench_config.get('epsilon', 'N/A')} | "
-                        f"{recall:.4f} | {qps:.2f} | {p50:.2f} | {p99:.2f} |"
-                    )
+                    bench_rows.append([
+                        str(bench_config.get("nprob", "N/A")),
+                        str(bench_config.get("epsilon", "N/A")),
+                        f"{recall:.4f}",
+                        f"{qps:.2f}",
+                        f"{p50:.2f}",
+                        f"{p99:.2f}",
+                    ])
+
+        if suite_type == "pgvector":
+            lines.extend(format_markdown_table(
+                ["EF Search", "Recall", "QPS", "P50 (ms)", "P99 (ms)"],
+                bench_rows
+            ))
+        else:
+            lines.extend(format_markdown_table(
+                ["nprob", "epsilon", "Recall", "QPS", "P50 (ms)", "P99 (ms)"],
+                bench_rows
+            ))
 
         # Add charts
         lines.extend([
