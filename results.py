@@ -38,7 +38,7 @@ class ResultsManager:
         for directory in [self.raw_dir, self.consolidated_dir, self.reports_dir, self.charts_dir]:
             directory.mkdir(parents=True, exist_ok=True)
 
-        self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         self.hostname = socket.gethostname()
 
     def save_raw_results(self, suite_name: str, config: dict, results: dict) -> Path:
