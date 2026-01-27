@@ -41,14 +41,15 @@ class TestSuite(common.TestSuite):
         conn.execute(f'SET vchordrq.probes="{nprob}"')
         conn.execute(f"SET vchordrq.epsilon={epsilon}")
 
+        # Use prepared statement for repeated queries
+        conn.execute(f"PREPARE bench_query AS SELECT id FROM {table_name} ORDER BY embedding {metric_ops} $1::vector LIMIT {top}")
+
         results = []
         for query, ground_truth in zip(test, answer):
+            query_list = query.tolist() if hasattr(query, "tolist") else list(query)
             start = time.perf_counter()
             with conn.cursor() as cursor:
-                cursor.execute(
-                    f"SELECT id FROM {table_name} ORDER BY embedding {metric_ops} %s::vector LIMIT {top}",
-                    (query.tolist() if hasattr(query, "tolist") else list(query),),
-                )
+                cursor.execute("EXECUTE bench_query (%s)", (query_list,))
                 result = cursor.fetchall()
             end = time.perf_counter()
 
@@ -58,6 +59,7 @@ class TestSuite(common.TestSuite):
             hit = len(result_ids & ground_truth_ids)
             results.append((hit, (start, end)))
 
+        conn.execute("DEALLOCATE bench_query")
         conn.close()
         return results
 
@@ -160,11 +162,15 @@ class TestSuite(common.TestSuite):
         distance = "ip" if distance == "dot" else distance
         spherical_bool = "true" if distance in ("ip", "cos") else "false"
 
-        self.debug_log(
-            f"pg_parallel_workers: {pg_parallel_workers}, lists: {lists}, sampling_factor: {sampling_factor}, "
-            f"batch_size: {batch_size}, distance: {distance}, "
-            f"spherical_centroids: {spherical_bool}, residual_quantization: {residual_quantization}"
-        )
+        if self.debug:
+            print(f"\n🔧 Index Configuration (pgpu):")
+            print(f"    • Lists:           {lists}")
+            print(f"    • Sampling Factor: {sampling_factor}")
+            print(f"    • Batch Size:      {batch_size:,}")
+            print(f"    • Distance:        {distance}")
+            print(f"    • Spherical:       {spherical_bool}")
+            print(f"    • Residual Quant:  {residual_quantization}")
+            print()
 
         self.results[suite_name]["lists"] = lists
 
@@ -227,8 +233,6 @@ class TestSuite(common.TestSuite):
             f"nprob: {benchmark['nprob']}, epsilon: {benchmark['epsilon']}, "
             f"metric: {metric}, metric_ops: {metric_ops}"
         )
-
-        self.prewarm_index(table_name)
 
         return super().sequential_bench(
             name, table_name, conn, metric_ops, top, benchmark, dataset

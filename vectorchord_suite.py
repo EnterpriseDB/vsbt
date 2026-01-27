@@ -48,14 +48,15 @@ class TestSuite(common.TestSuite):
         conn.execute(f'SET vchordrq.probes="{nprob}"')
         conn.execute(f"SET vchordrq.epsilon={epsilon}")
 
+        # Use prepared statement for repeated queries
+        conn.execute(f"PREPARE bench_query AS SELECT id FROM {table_name} ORDER BY embedding {metric_ops} $1::vector LIMIT {top}")
+
         results = []
         for query, ground_truth in zip(test, answer):
+            query_list = query.tolist() if hasattr(query, "tolist") else list(query)
             start = time.perf_counter()
             with conn.cursor() as cursor:
-                cursor.execute(
-                    f"SELECT id FROM {table_name} ORDER BY embedding {metric_ops} %s::vector LIMIT {top}",
-                    (query.tolist() if hasattr(query, "tolist") else list(query),),
-                )
+                cursor.execute("EXECUTE bench_query (%s)", (query_list,))
                 result = cursor.fetchall()
             end = time.perf_counter()
 
@@ -65,6 +66,7 @@ class TestSuite(common.TestSuite):
             hit = len(result_ids & ground_truth_ids)
             results.append((hit, (start, end)))
 
+        conn.execute("DEALLOCATE bench_query")
         conn.close()
         return results
 
@@ -142,11 +144,14 @@ class TestSuite(common.TestSuite):
         residual_quantization = config["residual_quantization"]
         metric = dataset["metric"]
 
-        self.debug_log(
-            f"Index config: pg_parallel_workers={pg_parallel_workers}, lists={lists}, build_threads={build_threads}, "
-            f"kmeans_hierarchical={kmeans_hierarchical}, sampling_factor={sampling_factor}, "
-            f"metric={metric}, residual_quantization={residual_quantization}"
-        )
+        if self.debug:
+            print(f"\n🔧 Index Configuration (VectorChord):")
+            print(f"    • Lists:           {lists}")
+            print(f"    • Build Threads:   {build_threads}")
+            print(f"    • K-means Hier.:   {kmeans_hierarchical}")
+            print(f"    • Sampling Factor: {sampling_factor}")
+            print(f"    • Residual Quant:  {residual_quantization}")
+            print()
 
         self.results[suite_name]["lists"] = lists
         self.results[suite_name]["build_threads"] = build_threads
@@ -243,8 +248,6 @@ class TestSuite(common.TestSuite):
         conn.execute("SET jit=false")
         conn.execute(f'SET vchordrq.probes="{benchmark["nprob"]}"')
         conn.execute(f"SET vchordrq.epsilon={benchmark['epsilon']}")
-
-        self.prewarm_index(table_name)
 
         metric_ops = self._get_metric_operator(metric)
 

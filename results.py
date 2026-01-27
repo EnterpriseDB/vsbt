@@ -89,7 +89,6 @@ class ResultsManager:
         with open(filepath, "w") as f:
             json.dump(raw_data, f, indent=2, default=str)
 
-        print(f"Raw results saved to: {filepath}")
         return filepath
 
     def append_to_consolidated(
@@ -202,7 +201,6 @@ class ResultsManager:
         plt.savefig(filepath, dpi=150)
         plt.close()
 
-        print(f"Chart saved to: {filepath}")
         return filepath
 
     def generate_latency_chart(
@@ -275,7 +273,6 @@ class ResultsManager:
         plt.savefig(filepath, dpi=150)
         plt.close()
 
-        print(f"Chart saved to: {filepath}")
         return filepath
 
     def generate_build_time_chart(
@@ -347,7 +344,6 @@ class ResultsManager:
         plt.savefig(filepath, dpi=150)
         plt.close()
 
-        print(f"Chart saved to: {filepath}")
         return filepath
 
     def generate_markdown_report(
@@ -550,7 +546,6 @@ class ResultsManager:
         with open(filepath, "w") as f:
             f.write("\n".join(lines))
 
-        print(f"Report saved to: {filepath}")
         return filepath
 
     def process_suite_results(
@@ -616,4 +611,4 @@ class ResultsManager:
                 system_dashboard_path=dashboard_in_charts,
             )
 
-        print(f"\nConsolidated results: {self.consolidated_dir / 'all_results.csv'}")
+        print(f"\n📁 Results available in {self.reports_dir.parent}/ → raw, reports, consolidated")

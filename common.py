@@ -564,22 +564,26 @@ class TestSuite:
         print(f"Running sequential benchmark with {m} queries")
         conn.execute("SET jit=false")
 
+        # Use prepared statement for repeated queries
+        conn.execute(f"PREPARE bench_query AS SELECT id FROM {table_name} ORDER BY embedding {metric_ops} $1 LIMIT {top}")
+
+        # Pre-convert answers if numpy
+        answers_list = dataset["answer"]
+        if hasattr(answers_list, "tolist"):
+            answers_list = [a[:top].tolist() if hasattr(a, "tolist") else a[:top] for a in answers_list]
+
         results = []
         pbar = tqdm(enumerate(dataset["test"]), total=m, ncols=80,
                     bar_format="{desc} {n}/{total}: {percentage:3.0f}%|{bar}|")
         for i, query in pbar:
             start = time.perf_counter()
             with conn.cursor() as cursor:
-                cursor.execute(
-                    f"SELECT id FROM {table_name} ORDER BY embedding {metric_ops} %s LIMIT {top}",
-                    (query,),
-                )
+                cursor.execute("EXECUTE bench_query (%s)", (query,))
                 result = cursor.fetchall()
             end = time.perf_counter()
 
             query_time = end - start
-            # Handle numpy vs list for answer
-            answers = dataset["answer"][i][:top]
+            answers = answers_list[i] if isinstance(answers_list, list) else answers_list[i][:top]
             if hasattr(answers, "tolist"):
                 answers = answers.tolist()
 
@@ -593,6 +597,7 @@ class TestSuite:
             pbar.set_description(f"recall: {recall_color}{curr_recall:.4f}\033[0m QPS: {curr_qps:.2f} P50: {curr_p50:.2f}ms")
 
         pbar.close()
+        conn.execute("DEALLOCATE bench_query")
         return results, metric_ops
 
     def parallel_bench(self, name, table_name, dataset, metric_ops, top, query_clients, benchmark):
@@ -604,8 +609,6 @@ class TestSuite:
         for _ in range(query_clients):
             batch = self.make_batch_args(test, answer, top, metric_ops, table_name, benchmark)
             batches.append(batch)
-
-        self.prewarm_index(table_name)
 
         with mp.Pool(processes=query_clients) as pool:
             batch_results = list(pool.map(self.__class__.process_batch, batches))
@@ -664,6 +667,9 @@ class TestSuite:
         }
 
     def run_benchmarks(self, suite_name: str, table_name: str, dataset: dict, query_clients):
+        # Prewarm index once before all benchmarks
+        self.prewarm_index(table_name)
+
         for name, benchmark in self.config[suite_name]["benchmarks"].items():
             print(f"Running benchmark: {benchmark}")
             result_dir = f"./results/{suite_name}/"

@@ -38,14 +38,15 @@ class TestSuite(common.TestSuite):
         conn = psycopg.connect(url)
         conn.execute(f"SET hnsw.ef_search={ef_search}")
 
+        # Use prepared statement for repeated queries
+        conn.execute(f"PREPARE bench_query AS SELECT id FROM {table_name} ORDER BY embedding {metric_ops} $1::vector LIMIT {top}")
+
         results = []
         for query, ground_truth in zip(test, answer):
+            query_list = query.tolist() if hasattr(query, "tolist") else list(query)
             start = time.perf_counter()
             with conn.cursor() as cursor:
-                cursor.execute(
-                    f"SELECT id FROM {table_name} ORDER BY embedding {metric_ops} %s::vector LIMIT {top}",
-                    (query.tolist() if hasattr(query, "tolist") else list(query),),
-                )
+                cursor.execute("EXECUTE bench_query (%s)", (query_list,))
                 result = cursor.fetchall()
             end = time.perf_counter()
 
@@ -55,6 +56,7 @@ class TestSuite(common.TestSuite):
             hit = len(result_ids & ground_truth_ids)
             results.append((hit, (start, end)))
 
+        conn.execute("DEALLOCATE bench_query")
         conn.close()
         return results
 
@@ -140,10 +142,12 @@ class TestSuite(common.TestSuite):
         metric = dataset["metric"]
         metric_func = self._get_metric_func(metric)
 
-        self.debug_log(
-            f"Index config: metric_func={metric_func}, pg_parallel_workers={pg_parallel_workers}, "
-            f"m={m}, ef_construction={ef_construction}"
-        )
+        if self.debug:
+            print(f"\n🔧 Index Configuration (HNSW):")
+            print(f"    • M:               {m}")
+            print(f"    • EF Construction: {ef_construction}")
+            print(f"    • Metric Function: {metric_func}")
+            print()
 
         conn = self.create_connection()
         start_time = time.perf_counter()
@@ -186,8 +190,6 @@ class TestSuite(common.TestSuite):
             f"Benchmark config: ef_search={benchmark['efSearch']}, "
             f"metric={metric}, metric_ops={metric_ops}"
         )
-
-        self.prewarm_index(table_name)
 
         return super().sequential_bench(
             name, table_name, conn, metric_ops, top, benchmark, dataset
