@@ -22,64 +22,49 @@ class PGStatsCollector:
         self.conn = conn
         self.snapshots = {}
         self._pg_stat_statements_available = None
-        self._custom_settings = None
+        # Capture custom settings immediately (connection may close later)
+        self._custom_settings = self._fetch_custom_settings()
+
+    def _fetch_custom_settings(self) -> list[dict]:
+        """
+        Fetch PostgreSQL settings that differ from their default values.
+
+        Called at initialization to capture settings before connection closes.
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    SELECT
+                        name,
+                        setting,
+                        unit,
+                        boot_val,
+                        source,
+                        category
+                    FROM pg_settings
+                    WHERE source NOT IN ('default', 'override')
+                      AND setting != boot_val
+                    ORDER BY category, name
+                """)
+
+                settings = []
+                for row in cur.fetchall():
+                    name, setting, unit, boot_val, source, category = row
+                    settings.append({
+                        "name": name,
+                        "setting": setting,
+                        "unit": unit or "",
+                        "boot_val": boot_val,
+                        "source": source,
+                        "category": category,
+                    })
+                return settings
+        except Exception:
+            return []
 
     def get_custom_settings(self) -> list[dict]:
-        """
-        Get PostgreSQL settings that differ from their default values.
-
-        Returns a list of dicts with name, setting, unit, boot_val, and source.
-        """
-        if self._custom_settings is not None:
-            return self._custom_settings
-
-        # Categories relevant to performance benchmarking
-        relevant_categories = [
-            'Autovacuum',
-            'Client Connection Defaults / Statement Behavior',
-            'Connections and Authentication / Connection Settings',
-            'Resource Usage / Background Writer',
-            'Resource Usage / Memory',
-            'Resource Usage / Asynchronous Behavior',
-            'Resource Usage / Disk',
-            'Write-Ahead Log / Checkpoints',
-            'Write-Ahead Log / Settings',
-            'Query Tuning / Planner Cost Constants',
-            'Query Tuning / Planner Method Configuration',
-            'Query Tuning / Other Planner Options',
-            'Query Tuning / Parallel Query',
-        ]
-
-        with self.conn.cursor() as cur:
-            cur.execute("""
-                SELECT
-                    name,
-                    setting,
-                    unit,
-                    boot_val,
-                    source,
-                    category
-                FROM pg_settings
-                WHERE source NOT IN ('default', 'override')
-                  AND setting != boot_val
-                ORDER BY category, name
-            """)
-
-            self._custom_settings = []
-            for row in cur.fetchall():
-                name, setting, unit, boot_val, source, category = row
-                # Filter to relevant categories if they're performance-related
-                # or include all if category filtering is too restrictive
-                self._custom_settings.append({
-                    "name": name,
-                    "setting": setting,
-                    "unit": unit or "",
-                    "boot_val": boot_val,
-                    "source": source,
-                    "category": category,
-                })
-
-        return self._custom_settings
+        """Get PostgreSQL settings that differ from their default values."""
+        return self._custom_settings or []
 
     def format_custom_settings(self) -> str:
         """Format custom PostgreSQL settings as markdown."""
