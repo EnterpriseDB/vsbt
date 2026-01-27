@@ -314,7 +314,7 @@ class TestSuite:
             conn.close()
 
         chunk_size = self.chunk_size
-        pbar = tqdm(desc="Adding embeddings", total=n)
+        pbar = tqdm(desc="Adding embeddings", total=n, ncols=80)
         threads = []
         for i in range(0, n, chunk_size):
             chunk_start = i
@@ -402,7 +402,7 @@ class TestSuite:
                 t_conn.close()
 
             # Initialize Progress Bar in "rows"
-            pbar = tqdm(desc="Adding embeddings", total=n, unit="rows")
+            pbar = tqdm(desc="Adding embeddings", total=n, unit="rows", ncols=80)
 
             if num_threads > 1: # Careful with python GIL and I/O bound
                 print(f"Parallel load enabled for {name}. Threads: {num_threads}")
@@ -433,7 +433,7 @@ class TestSuite:
             print(f"Sequential load for {name} (Generator source)")
             conn = self.create_connection()
             # Initialize Pbar for generator
-            pbar = tqdm(desc="Adding embeddings", total=n, unit="rows")
+            pbar = tqdm(desc="Adding embeddings", total=n, unit="rows", ncols=80)
 
             with conn.cursor().copy(
                     f"COPY {name} (id, embedding) FROM STDIN WITH (FORMAT BINARY)"
@@ -498,7 +498,7 @@ class TestSuite:
                 result = acur.fetchone()
                 blocks_total = result[0] if result else 0
 
-            pbar = tqdm(smoothing=0.0, total=blocks_total, desc="Building index", dynamic_ncols=True)
+            pbar = tqdm(smoothing=0.0, total=blocks_total, desc="Building index", ncols=80)
             while True:
                 if event.is_set():
                     pbar.update(pbar.total - pbar.n)
@@ -565,7 +565,7 @@ class TestSuite:
         conn.execute("SET jit=false")
 
         results = []
-        pbar = tqdm(enumerate(dataset["test"]), total=m)
+        pbar = tqdm(enumerate(dataset["test"]), total=m, ncols=80)
         for i, query in pbar:
             start = time.perf_counter()
             with conn.cursor() as cursor:
