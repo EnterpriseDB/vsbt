@@ -1,49 +1,54 @@
+"""
+VectorChord Benchmark Suite
+
+Benchmarks vector search using the VectorChord extension with IVF indexes
+(vchordrq) for PostgreSQL.
+"""
+
 import argparse
+import time
+
 import psycopg
 import pgvector.psycopg
-
-from time import perf_counter
 from mdutils.mdutils import MdUtils
 
 import common
 
 
 def build_arg_parse():
-    parser = argparse.ArgumentParser(description="Vectorchord Test Suite")
+    """Build argument parser for VectorChord benchmark suite."""
+    parser = argparse.ArgumentParser(description="VectorChord Benchmark Suite")
     common.build_arg_parse(parser)
-
-    # Add specific arguments for Vectorchord suite
-    # None
-
     return parser
 
 
 class TestSuite(common.TestSuite):
+    """
+    Test suite for VectorChord IVF indexing.
 
-    metric_dict = {
+    Uses the VectorChord extension to build IVF indexes with optional
+    residual quantization for approximate nearest neighbor searches.
+    """
+
+    METRIC_OPS = {
         "l2": "vector_l2_ops",
         "euclidean": "vector_l2_ops",
         "cos": "vector_cosine_ops",
         "ip": "vector_ip_ops",
-        "dot": "vector_ip_ops"
+        "dot": "vector_ip_ops",
     }
 
     @staticmethod
     def process_batch(args):
-        import time
-
-        # Unpack and use nprob, epsilon, etc.
+        """Process a batch of queries in parallel."""
         test, answer, top, metric_ops, url, table_name, nprob, epsilon = args
 
         conn = psycopg.connect(url)
-
         conn.execute("SET jit=false")
-        conn.execute(f"SET vchordrq.probes=\"{nprob}\"")
+        conn.execute(f'SET vchordrq.probes="{nprob}"')
         conn.execute(f"SET vchordrq.epsilon={epsilon}")
 
-        hits = 0
         results = []
-
         for query, ground_truth in zip(test, answer):
             start = time.perf_counter()
             with conn.cursor() as cursor:
@@ -54,31 +59,18 @@ class TestSuite(common.TestSuite):
                 result = cursor.fetchall()
             end = time.perf_counter()
 
-            result_ids = set([p[0] for p in result[:top]])
-            ground_truth_ids = set(
-                ground_truth[:top].tolist() if hasattr(ground_truth[:top], "tolist") else ground_truth[:top])
+            result_ids = {p[0] for p in result[:top]}
+            gt_ids = ground_truth[:top]
+            ground_truth_ids = set(gt_ids.tolist() if hasattr(gt_ids, "tolist") else gt_ids)
             hit = len(result_ids & ground_truth_ids)
-            hits += hit
-
             results.append((hit, (start, end)))
 
         conn.close()
         return results
 
-
     def make_batch_args(self, test, answer, top, metric, table_name, benchmark):
-        # Pass extra args for vectorchord
-
-        # Determine metric operations based on dataset metric
-        if metric in {"l2", "euclidean"}:
-            metric_ops = "<->"
-        elif metric in {"cos", "angular"}:
-            metric_ops = "<=>"
-        elif metric in {"dot", "ip"}:
-            metric_ops = "<#>"
-        else:
-            raise ValueError("unsupported metric type")
-
+        """Prepare arguments for parallel batch processing."""
+        metric_ops = self._get_metric_operator(metric)
         return (
             test,
             answer,
@@ -87,120 +79,103 @@ class TestSuite(common.TestSuite):
             self.url,
             table_name,
             benchmark["nprob"],
-            benchmark["epsilon"]
+            benchmark["epsilon"],
         )
 
+    @staticmethod
+    def _get_metric_operator(metric: str) -> str:
+        """Convert metric name to PostgreSQL operator."""
+        operators = {
+            "l2": "<->",
+            "euclidean": "<->",
+            "cos": "<=>",
+            "angular": "<=>",
+            "dot": "<#>",
+            "ip": "<#>",
+        }
+        if metric not in operators:
+            raise ValueError(f"Unsupported metric type: {metric}")
+        return operators[metric]
+
     def create_connection(self):
+        """Create a database connection with pgvector support."""
         conn = super().create_connection()
         pgvector.psycopg.register_vector(conn)
-
         return conn
 
     def init_ext(self, suite_name: str = None):
+        """Initialize required PostgreSQL extensions."""
         conn = super().create_connection()
-        conn.execute("CREATE EXTENSION IF NOT EXISTS vchord cascade")
+        conn.execute("CREATE EXTENSION IF NOT EXISTS vchord CASCADE")
         conn.close()
         self.debug_log("Extensions initialized successfully.")
 
     def prewarm_index(self, table_name: str):
+        """Prewarm the index into memory for consistent benchmarking."""
         conn = self.create_connection()
         print("Prewarming the index...", end="", flush=True)
         try:
             conn.execute(
-                f"SELECT vchordrq_prewarm('{table_name}_embedding_idx'::regclass)")
+                f"SELECT vchordrq_prewarm('{table_name}_embedding_idx'::regclass)"
+            )
             print(" done!")
-        except Exception:
-            print(" failed!")
-            pass
+        except psycopg.Error as e:
+            print(f" failed! ({e.diag.message_primary})")
+            self.debug_log(f"Prewarm failed: {e}")
         finally:
             conn.close()
 
     def create_index(self, suite_name: str, table_name: str, dataset: dict):
-        event, os_monitor_thread, index_monitor_thread = super().create_index(suite_name, table_name, dataset)
+        """Create an IVF index using VectorChord."""
+        event, os_monitor_thread, index_monitor_thread = super().create_index(
+            suite_name, table_name, dataset
+        )
 
-        workers = self.config[suite_name]["workers"]
-        lists = self.config[suite_name]["lists"]
-        build_threads=self.config[suite_name].get("build_threads",1) # default to 1 if not specified
-        kmeans_hierarchical = self.config[suite_name]["kmeans_hierarchical"]
-        kmeans_dimension = self.config[suite_name].get("kmeans_dimension", dataset["dim"])
-        sampling_factor = self.config[suite_name]["samplingFactor"]
-        residual_quantization = self.config[suite_name]["residual_quantization"]
+        # Load configuration
+        config = self.config[suite_name]
+        workers = config["workers"]
+        lists = config["lists"]
+        build_threads = config.get("build_threads", 1)
+        kmeans_hierarchical = config["kmeans_hierarchical"]
+        kmeans_dimension = config.get("kmeans_dimension", dataset["dim"])
+        sampling_factor = config["samplingFactor"]
+        residual_quantization = config["residual_quantization"]
         metric = dataset["metric"]
+
         self.debug_log(
             f"Index config: workers={workers}, lists={lists}, build_threads={build_threads}, "
-            f"kmeans_hierarchical={kmeans_hierarchical}, kmeans_dimension={kmeans_dimension}, "
-            f"sampling_factor={sampling_factor}, metric={metric}, residual_quantization={residual_quantization}"
+            f"kmeans_hierarchical={kmeans_hierarchical}, sampling_factor={sampling_factor}, "
+            f"metric={metric}, residual_quantization={residual_quantization}"
         )
+
         self.results[suite_name]["lists"] = lists
         self.results[suite_name]["build_threads"] = build_threads
-        metric_ops = self.metric_dict[metric]
-        kmeans_hierarchical_string = "kmeans_algorithm.hierarchical = {}" if kmeans_hierarchical else "kmeans_algorithm.lloyd = {}"
-        residual_quantization_string = "true" if residual_quantization else "false"
 
-        config = f"""
-        residual_quantization = {residual_quantization_string}
-        build.pin = 2
-        """
+        metric_ops = self.METRIC_OPS[metric]
+        kmeans_algo = "kmeans_algorithm.hierarchical = {}" if kmeans_hierarchical else "kmeans_algorithm.lloyd = {}"
+        rq_string = "true" if residual_quantization else "false"
 
-        # external
-        if self.centroids:
-            # Case when centroids file is provided
-            external_centroids_cfg = f"""
-            [build.external]
-            table = 'public.centroids'
-            """
-            ivf_config = "\n".join(
-                [config, external_centroids_cfg])
-            self.debug_log(f"Using external centroids file, metric={metric_ops}")
-        elif self.centroids_table:
-            # Case when centroids table is provided
-            external_centroids_cfg = f"""
-            [build.external]
-            table = '{self.centroids_table}'
-            """
-            ivf_config = "\n".join(
-                [config, external_centroids_cfg])
-            self.debug_log(f"Using external centroids table={self.centroids_table}, metric={metric_ops}")
-        # internal
-        else:
-            if metric == "l2" or metric == "euclidean":
-                internal_centroids_cfg = f"""
-                [build.internal]
-                lists = {lists}
-                build_threads = {build_threads}
-                spherical_centroids = false
-                kmeans_dimension = {kmeans_dimension}
-                sampling_factor = {sampling_factor}
-                {kmeans_hierarchical_string}
-                """
-            elif metric == "cos" or metric == "dot" or metric == "ip":
-                internal_centroids_cfg = f"""
-                [build.internal]
-                lists = {lists}
-                build_threads = {build_threads}
-                spherical_centroids = true
-                kmeans_dimension = {kmeans_dimension}
-                sampling_factor = {sampling_factor}
-                {kmeans_hierarchical_string}
-                """
-            else:
-                raise ValueError
+        # Build IVF configuration
+        ivf_config = self._build_ivf_config(
+            metric, lists, build_threads, kmeans_dimension,
+            sampling_factor, kmeans_algo, rq_string
+        )
 
-            ivf_config = "\n".join(
-                [config, internal_centroids_cfg])
-            self.debug_log(f"Using internal centroids, metric={metric_ops}")
+        self.debug_log(f"Centroids source: {'external file' if self.centroids else 'external table' if self.centroids_table else 'internal'}")
 
         conn = self.create_connection()
+        start_time = time.perf_counter()
 
-        start_time = perf_counter()
         conn.execute(f"SET max_parallel_maintenance_workers TO {workers}")
         conn.execute(f"SET max_parallel_workers TO {workers}")
         conn.execute(
-            f"CREATE INDEX {table_name}_embedding_idx ON {table_name} USING vchordrq (embedding {metric_ops}) WITH (options = $${ivf_config}$$)"
+            f"CREATE INDEX {table_name}_embedding_idx ON {table_name} "
+            f"USING vchordrq (embedding {metric_ops}) WITH (options = $${ivf_config}$$)"
         )
 
-        self.results[suite_name]["index_build_time"] = int(round(perf_counter() - start_time))
-        print(f'Index build time: {self.results[suite_name]["index_build_time"]}s')
+        build_time = int(round(time.perf_counter() - start_time))
+        self.results[suite_name]["index_build_time"] = build_time
+        print(f"Index build time: {build_time}s")
 
         conn.execute("CHECKPOINT")
         conn.close()
@@ -210,46 +185,87 @@ class TestSuite(common.TestSuite):
         index_monitor_thread.join()
         os_monitor_thread.join()
 
-    def sequential_bench(
-            self,
-            name: str,
-            table_name: str,
-            conn: psycopg.Connection,
-            metric: str,
-            top: int,
-            benchmark: dict,
-            dataset: dict
-    ) -> tuple[list[tuple[int, float]], str]:
+    def _build_ivf_config(
+        self,
+        metric: str,
+        lists: list,
+        build_threads: int,
+        kmeans_dimension: int,
+        sampling_factor: int,
+        kmeans_algo: str,
+        rq_string: str,
+    ) -> str:
+        """Build the IVF configuration string for index creation."""
+        base_config = f"""
+        residual_quantization = {rq_string}
+        build.pin = 2
+        """
 
+        if self.centroids:
+            external_cfg = """
+            [build.external]
+            table = 'public.centroids'
+            """
+            return "\n".join([base_config, external_cfg])
+
+        if self.centroids_table:
+            external_cfg = f"""
+            [build.external]
+            table = '{self.centroids_table}'
+            """
+            return "\n".join([base_config, external_cfg])
+
+        # Internal centroids
+        spherical = "true" if metric in ("cos", "dot", "ip") else "false"
+        internal_cfg = f"""
+        [build.internal]
+        lists = {lists}
+        build_threads = {build_threads}
+        spherical_centroids = {spherical}
+        kmeans_dimension = {kmeans_dimension}
+        sampling_factor = {sampling_factor}
+        {kmeans_algo}
+        """
+        return "\n".join([base_config, internal_cfg])
+
+    def sequential_bench(
+        self,
+        name: str,
+        table_name: str,
+        conn: psycopg.Connection,
+        metric: str,
+        top: int,
+        benchmark: dict,
+        dataset: dict,
+    ) -> tuple[list[tuple[int, float]], str]:
+        """Run sequential benchmark queries."""
         conn.execute("SET jit=false")
-        conn.execute(f"SET vchordrq.probes=\"{benchmark['nprob']}\"")
+        conn.execute(f'SET vchordrq.probes="{benchmark["nprob"]}"')
         conn.execute(f"SET vchordrq.epsilon={benchmark['epsilon']}")
 
         self.prewarm_index(table_name)
 
-        if metric in {"l2", "euclidean"}:
-            metric_ops = "<->"
-        elif metric in {"cos", "angular"}:
-            metric_ops = "<=>"
-        elif metric in {"dot", "ip"}:
-            metric_ops = "<#>"
-        else:
-            raise ValueError("unsupported metric type")
+        metric_ops = self._get_metric_operator(metric)
 
         self.debug_log(
-            f"Benchmark config: metric={dataset['metric']}, nprob={benchmark['nprob']}, "
-            f"epsilon={benchmark['epsilon']}, metric_ops={metric_ops}"
+            f"Benchmark config: nprob={benchmark['nprob']}, epsilon={benchmark['epsilon']}, "
+            f"metric={metric}, metric_ops={metric_ops}"
         )
 
-        return super().sequential_bench(name, table_name, conn, metric_ops, top, benchmark, dataset)
+        return super().sequential_bench(
+            name, table_name, conn, metric_ops, top, benchmark, dataset
+        )
 
     def generate_markdown_result(self):
+        """Generate a markdown file with benchmark results."""
         self.debug_log(f"Results: {self.results}")
+
         md_file = MdUtils(
-            file_name="./results/benchmark_results", title="Benchmark Results",
+            file_name="./results/benchmark_results",
+            title="Benchmark Results",
         )
 
-        list_of_strings = [
+        headers = [
             "test_name",
             "dataset",
             "workers",
@@ -269,55 +285,70 @@ class TestSuite(common.TestSuite):
             "p50_latency",
             "p99_latency",
         ]
-        columns = len(list_of_strings)
 
+        table_data = list(headers)
         rows = 1
+
         for suite_name, suite in self.config.items():
-            for name, benchmark in suite["benchmarks"].items():
+            suite_config = self.config[suite_name]
+            suite_results = self.results[suite_name]
+
+            for benchmark_name, benchmark in suite["benchmarks"].items():
                 rows += 1
-                list_of_strings += [
+                table_data.extend([
                     suite_name,
-                    self.config[suite_name]["dataset"],
-                    self.config[suite_name]["workers"],
-                    self.config[suite_name]["metric"],
+                    suite_config["dataset"],
+                    suite_config["workers"],
+                    suite_config["metric"],
                     self.query_clients,
-                    self.results[suite_name].get("lists", "N/A"),
-                    self.config[suite_name]["samplingFactor"],
+                    suite_results.get("lists", "N/A"),
+                    suite_config["samplingFactor"],
                     benchmark["nprob"],
                     benchmark["epsilon"],
-                    self.config[suite_name]["top"],
-                    self.results[suite_name].get("load_time", "N/A"),
-                    self.results[suite_name].get("build_threads", "N/A"),
-                    self.results[suite_name].get("index_build_time", "N/A"),
-                    self.results[suite_name].get("index_size", "N/A"),
-                    f'{self.results[suite_name][name]["recall"]:.4f}',
-                    f'{self.results[suite_name][name]["qps"]:.4f}',
-                    f'{self.results[suite_name][name]["p50_latency"]:.4f}',
-                    f'{self.results[suite_name][name]["p99_latency"]:.4f}',
-                ]
+                    suite_config["top"],
+                    suite_results.get("load_time", "N/A"),
+                    suite_results.get("build_threads", "N/A"),
+                    suite_results.get("index_build_time", "N/A"),
+                    suite_results.get("index_size", "N/A"),
+                    f'{suite_results[benchmark_name]["recall"]:.4f}',
+                    f'{suite_results[benchmark_name]["qps"]:.4f}',
+                    f'{suite_results[benchmark_name]["p50_latency"]:.4f}',
+                    f'{suite_results[benchmark_name]["p99_latency"]:.4f}',
+                ])
 
         md_file.new_table(
-            columns=columns,
+            columns=len(headers),
             rows=rows,
-            text=list_of_strings,
+            text=table_data,
             text_align="right",
         )
 
         md_file.create_md_file()
 
 
-if __name__ == "__main__":
+def main():
+    """Main entry point for VectorChord benchmark suite."""
     parser = build_arg_parse()
     args = parser.parse_args()
 
     test_suite = TestSuite(
-        args.suite, args.url, args.devices,
-        args.chunk_size, args.skip_add_embeddings,
-        args.centroids_file, args.centroids_table,
-        args.skip_index_creation, args.query_clients,
-        args.max_load_threads, args.debug, args.overwrite_table
+        suite_file=args.suite,
+        url=args.url,
+        devices=args.devices,
+        chunk_size=args.chunk_size,
+        skip_add_embeddings=args.skip_add_embeddings,
+        centroids=args.centroids_file,
+        centroids_table=args.centroids_table,
+        skip_index_creation=args.skip_index_creation,
+        query_clients=args.query_clients,
+        max_load_threads=args.max_load_threads,
+        debug=args.debug,
+        overwrite_table=args.overwrite_table,
     )
 
     test_suite.run()
-
     print("Test suite completed.")
+
+
+if __name__ == "__main__":
+    main()
