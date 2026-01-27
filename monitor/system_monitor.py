@@ -257,6 +257,9 @@ class SystemMonitor:
 
         if not found_devices:
             # None of our devices found - fall back to aggregate
+            # This likely means device name mismatch between detection and psutil
+            print(f"Warning: Devices {self.devices} not found in psutil. "
+                  f"Available: {list(all_counters.keys())[:10]}... Falling back to system-wide aggregate.")
             return psutil.disk_io_counters()
 
         # Return a named tuple-like object with the aggregated values
