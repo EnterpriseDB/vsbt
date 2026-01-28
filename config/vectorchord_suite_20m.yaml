@@ -1,5 +1,3 @@
-# python3 vectorchord_suite.py -s vectorchord_suite_20m.yaml --url postgresql://postgres@/postgres
-# python3 vectorchord_suite.py -s vectorchord_suite_20m.yaml --url postgresql://postgres@/postgres --skip_add_embeddings --skip_index_creation
 vc-laion-20m-35000-test-ip:
   dataset: laion-20m-test-ip
   datasetType: hdf5
@@ -7,7 +5,7 @@ vc-laion-20m-35000-test-ip:
   samplingFactor: 256 # Note: these are the settings to be reduced for faster execution on CPU
   kmeans_dimension: 768 # Note: these are the settings to be reduced for faster execution on CPU
   lists: [190, 35000]
-  batchSize: 10000000
+  batchSize: 1000000
   residual_quantization: true
   kmeans_hierarchical: true
   pg_parallel_workers: 32

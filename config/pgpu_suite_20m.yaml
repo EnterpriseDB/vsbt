@@ -1,12 +1,10 @@
-d_load, d_p1, d_p2, d_p3, d_store, global_start.elapsed()# python3 pgpu_suite.py -s pgpu_suite_20m.yaml --url postgresql://postgres@/postgres
-# python3 pgpu_suite.py -s pgpu_suite_20m.yaml --url postgresql://postgres@/postgres --skip_add_embeddings --skip_index_creation
 pgpu-laion-20m-35000-test-ip:
   dataset: laion-20m-test-ip
   datasetType: hdf5
   metric: dot
   samplingFactor: 256
   lists: [190, 35000]
-  batchSize: 10000000
+  batchSize: 1000000
   residual_quantization: true
   pg_parallel_workers: 32
   top: 10

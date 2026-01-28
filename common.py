@@ -60,7 +60,7 @@ def build_arg_parse(parser: argparse.ArgumentParser):
     )
 
     parser.add_argument(
-        "-ct", "--centroids_table",
+        "-ct", "--centroids-table",
         help="Centroids table name",
         type=str,
         required=False,
@@ -144,10 +144,6 @@ def load_suite_config(suite_file: str) -> dict:
             f"configuration file {suite_file} is empty or invalid")
 
     return config
-
-def print_memory_usage(stage):
-    process = psutil.Process(os.getpid())
-    print(f"{stage} memory: {process.memory_info().rss / 1024 ** 2:.2f} MB")
 
 def calculate_coverage(time_intervals):
     if not time_intervals:
@@ -267,8 +263,6 @@ class TestSuite:
 
     def prewarm_index(self, table_name: str):
         raise NotImplementedError("prewarm_index should be implemented in subclasses.")
-
-    # --- REMOVED OBSOLETE get_hdf5_dataset and get_npy_dataset ---
 
     def add_embeddings_from_hdf5(self, suite_name, name, train, pg_parallel_workers):
         """Parallel add embeddings to the database from HDF5."""

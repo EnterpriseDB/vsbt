@@ -177,7 +177,7 @@ class TestSuite(common.TestSuite):
         top: int,
         benchmark: dict,
         dataset: dict,
-    ) -> list[tuple[int, float]]:
+    ) -> tuple[list[tuple[int, float]], str]:
         """Run sequential benchmark queries."""
         conn.execute(f"SET hnsw.ef_search={benchmark['efSearch']}")
 

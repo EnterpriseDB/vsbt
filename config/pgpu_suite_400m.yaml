@@ -4,14 +4,10 @@ pgpu-laion-400m-160000-test-ip:
   metric: dot
   samplingFactor: 256
   lists: [400, 160000]
-  samplingFact or: 256
   batchSize: 1000000
   pg_parallel_workers: 32
   top: 10
   residual_quantization: true
-  random_sampling: False
-  kmeans_n_redo: 1
-  kmeans_n_iter: 30
   benchmarks:
     10-20-1.0:
       nprob: 10,20

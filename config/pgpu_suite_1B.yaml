@@ -6,9 +6,6 @@ pgpu-deep1B-test-l2:
   lists: [550, 320000]
   batchSize: 5000000
   residual_quantization: true
-  random_sampling: False
-  kmeans_n_redo: 1
-  kmeans_n_iter: 30
   pg_parallel_workers: 32
   top: 10
   benchmarks:
