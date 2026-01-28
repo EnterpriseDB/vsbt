@@ -654,16 +654,41 @@ class TestSuite:
         test = dataset["test"]
         answer = dataset["answer"]
         m = test.shape[0]
+        total_queries = m * query_clients
+
+        print(f"Running parallel benchmark with {query_clients} clients × {m} queries = {total_queries:,} total")
 
         batches = []
         for _ in range(query_clients):
             batch = self.make_batch_args(test, answer, top, metric_ops, table_name, benchmark)
             batches.append(batch)
 
-        with mp.Pool(processes=query_clients) as pool:
-            batch_results = list(pool.map(self.__class__.process_batch, batches))
+        all_results = []
+        pbar = tqdm(total=total_queries, ncols=80,
+                    bar_format="{desc} {n}/{total}: {percentage:3.0f}%|{bar}|")
 
-        all_results = [result for batch in batch_results for result in batch]
+        with mp.Pool(processes=query_clients) as pool:
+            for batch_result in pool.imap_unordered(self.__class__.process_batch, batches):
+                all_results.extend(batch_result)
+
+                # Update progress and stats
+                completed = len(all_results)
+                pbar.n = completed
+                pbar.refresh()
+
+                # Calculate current metrics
+                if completed > 0:
+                    hits = sum(r[0] for r in all_results)
+                    recall = hits / (top * completed)
+                    total_time = calculate_coverage([r[1] for r in all_results])
+                    qps = completed / total_time
+                    latencies = [(r[1][1] - r[1][0]) for r in all_results]
+                    p50 = np.percentile(latencies, 50) * 1000
+
+                    recall_color = "\033[92m" if recall >= 0.95 else "\033[91m"
+                    pbar.set_description(f"recall: {recall_color}{recall:.4f}\033[0m QPS: {qps:.2f} P50: {p50:.2f}ms")
+
+        pbar.close()
         return all_results, metric_ops
 
     def run_benchmark(self, suite_name: str, name: str, table_name: str, result_dir: str, benchmark: dict,
