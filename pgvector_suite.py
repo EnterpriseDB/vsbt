@@ -36,16 +36,16 @@ class TestSuite(common.TestSuite):
         test, answer, top, metric_ops, url, table_name, ef_search = args
 
         conn = psycopg.connect(url)
+        pgvector.psycopg.register_vector(conn)
         conn.execute(f"SET hnsw.ef_search={ef_search}")
 
-        query_sql = f"SELECT id FROM {table_name} ORDER BY embedding {metric_ops} %s::vector LIMIT {top}"
+        query_sql = f"SELECT id FROM {table_name} ORDER BY embedding {metric_ops} %s LIMIT {top}"
 
         results = []
         for query, ground_truth in zip(test, answer):
-            query_list = query.tolist() if hasattr(query, "tolist") else list(query)
             start = time.perf_counter()
             with conn.cursor() as cursor:
-                cursor.execute(query_sql, (query_list,))
+                cursor.execute(query_sql, (query,))
                 result = cursor.fetchall()
             end = time.perf_counter()
 

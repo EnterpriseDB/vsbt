@@ -37,18 +37,18 @@ class TestSuite(common.TestSuite):
         test, answer, top, metric_ops, url, table_name, nprob, epsilon = args
 
         conn = psycopg.connect(url)
+        pgvector.psycopg.register_vector(conn)
         conn.execute("SET jit=false")
         conn.execute(f'SET vchordrq.probes="{nprob}"')
         conn.execute(f"SET vchordrq.epsilon={epsilon}")
 
-        query_sql = f"SELECT id FROM {table_name} ORDER BY embedding {metric_ops} %s::vector LIMIT {top}"
+        query_sql = f"SELECT id FROM {table_name} ORDER BY embedding {metric_ops} %s LIMIT {top}"
 
         results = []
         for query, ground_truth in zip(test, answer):
-            query_list = query.tolist() if hasattr(query, "tolist") else list(query)
             start = time.perf_counter()
             with conn.cursor() as cursor:
-                cursor.execute(query_sql, (query_list,))
+                cursor.execute(query_sql, (query,))
                 result = cursor.fetchall()
             end = time.perf_counter()
 
