@@ -45,11 +45,11 @@ class TestSuite(common.TestSuite):
         query_sql = f"SELECT id FROM {table_name} ORDER BY embedding {metric_ops} %s LIMIT {top}"
 
         results = []
+        cursor = conn.cursor()
         for query, ground_truth in zip(test, answer):
             start = time.perf_counter()
-            with conn.cursor() as cursor:
-                cursor.execute(query_sql, (query,))
-                result = cursor.fetchall()
+            cursor.execute(query_sql, (query,))
+            result = cursor.fetchall()
             end = time.perf_counter()
 
             result_ids = {p[0] for p in result[:top]}
@@ -58,6 +58,7 @@ class TestSuite(common.TestSuite):
             hit = len(result_ids & ground_truth_ids)
             results.append((hit, (start, end)))
 
+        cursor.close()
         conn.close()
         return results
 
