@@ -8,7 +8,7 @@ pgpu-laion-20m-35000-test-ip:
   lists: [190, 35000]
   batchSize: 10000000
   residual_quantization: true
-  pg_parallel_workers: 63
+  pg_parallel_workers: 32
   top: 10
   benchmarks:
     10-20-1.0:

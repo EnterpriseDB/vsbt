@@ -10,7 +10,7 @@ vc-laion-100m-160000-test-ip-128:
   build_threads: 128
   residual_quantization: true
   kmeans_hierarchical: true
-  pg_parallel_workers: 64
+  pg_parallel_workers: 32
   top: 10
   benchmarks:
     10-20-1.0:
@@ -68,7 +68,7 @@ vc-laion-100m-160000-test-ip-64:
   build_threads: 64
   residual_quantization: true
   kmeans_hierarchical: true
-  pg_parallel_workers: 64
+  pg_parallel_workers: 32
   top: 10
   benchmarks:
     10-20-1.0:
@@ -127,7 +127,7 @@ vc-laion-100m-160000-test-ip-32:
   batchSize: 10000000
   residual_quantization: true
   kmeans_hierarchical: true
-  pg_parallel_workers: 64
+  pg_parallel_workers: 32
   top: 10
   benchmarks:
     10-20-1.0:
@@ -186,7 +186,7 @@ vc-laion-100m-160000-test-ip-16:
   batchSize: 10000000
   residual_quantization: true
   kmeans_hierarchical: true
-  pg_parallel_workers: 64
+  pg_parallel_workers: 32
   top: 10
   benchmarks:
     10-20-1.0:
@@ -245,7 +245,7 @@ vc-laion-100m-160000-test-ip-8:
   batchSize: 10000000
   residual_quantization: true
   kmeans_hierarchical: true
-  pg_parallel_workers: 64
+  pg_parallel_workers: 32
   top: 10
   benchmarks:
     10-20-1.0:

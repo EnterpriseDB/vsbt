@@ -1,7 +1,7 @@
 pgvector-laion-5m-m12-64:
   dataset: laion-5m-test-ip
   datasetType: hdf5
-  pg_parallel_workers: 63
+  pg_parallel_workers: 32
   metric: dot
   m: 12
   efConstruction: 64
@@ -21,7 +21,7 @@ pgvector-laion-5m-m12-64:
 pgvector-laion-5m-m12-128:
   dataset: laion-5m-test-ip
   datasetType: hdf5
-  pg_parallel_workers: 63
+  pg_parallel_workers: 32
   metric: dot
   m: 12
   efConstruction: 128
@@ -41,7 +41,7 @@ pgvector-laion-5m-m12-128:
 pgvector-laion-5m-m12-256:
   dataset: laion-5m-test-ip
   datasetType: hdf5
-  pg_parallel_workers: 63
+  pg_parallel_workers: 32
   metric: dot
   m: 12
   efConstruction: 256
@@ -61,7 +61,7 @@ pgvector-laion-5m-m12-256:
 pgvector-laion-5m-m12-512:
   dataset: laion-5m-test-ip
   datasetType: hdf5
-  pg_parallel_workers: 63
+  pg_parallel_workers: 32
   metric: dot
   m: 12
   efConstruction: 512
@@ -81,7 +81,7 @@ pgvector-laion-5m-m12-512:
 pgvector-laion-5m-m16-64:
   dataset: laion-5m-test-ip
   datasetType: hdf5
-  pg_parallel_workers: 63
+  pg_parallel_workers: 32
   metric: dot
   m: 16
   efConstruction: 64
@@ -101,7 +101,7 @@ pgvector-laion-5m-m16-64:
 pgvector-laion-5m-m16-128:
   dataset: laion-5m-test-ip
   datasetType: hdf5
-  pg_parallel_workers: 63
+  pg_parallel_workers: 32
   metric: dot
   m: 16
   efConstruction: 128
@@ -121,7 +121,7 @@ pgvector-laion-5m-m16-128:
 pgvector-laion-5m-m16-256:
   dataset: laion-5m-test-ip
   datasetType: hdf5
-  pg_parallel_workers: 63
+  pg_parallel_workers: 32
   metric: dot
   m: 16
   efConstruction: 256
@@ -141,7 +141,7 @@ pgvector-laion-5m-m16-256:
 pgvector-laion-5m-m16-512:
   dataset: laion-5m-test-ip
   datasetType: hdf5
-  pg_parallel_workers: 63
+  pg_parallel_workers: 32
   metric: dot
   m: 16
   efConstruction: 512
@@ -161,7 +161,7 @@ pgvector-laion-5m-m16-512:
 pgvector-laion-5m-m24-64:
   dataset: laion-5m-test-ip
   datasetType: hdf5
-  pg_parallel_workers: 63
+  pg_parallel_workers: 32
   metric: dot
   m: 24
   efConstruction: 64
@@ -181,7 +181,7 @@ pgvector-laion-5m-m24-64:
 pgvector-laion-5m-m24-128:
   dataset: laion-5m-test-ip
   datasetType: hdf5
-  pg_parallel_workers: 63
+  pg_parallel_workers: 32
   metric: dot
   m: 24
   efConstruction: 128
@@ -201,7 +201,7 @@ pgvector-laion-5m-m24-128:
 pgvector-laion-5m-m24-256:
   dataset: laion-5m-test-ip
   datasetType: hdf5
-  pg_parallel_workers: 63
+  pg_parallel_workers: 32
   metric: dot
   m: 24
   efConstruction: 256
@@ -221,7 +221,7 @@ pgvector-laion-5m-m24-256:
 pgvector-laion-5m-m24-512:
   dataset: laion-5m-test-ip
   datasetType: hdf5
-  pg_parallel_workers: 63
+  pg_parallel_workers: 32
   metric: dot
   m: 24
   efConstruction: 512
@@ -241,7 +241,7 @@ pgvector-laion-5m-m24-512:
 pgvector-laion-5m-m36-128:
   dataset: laion-5m-test-ip
   datasetType: hdf5
-  pg_parallel_workers: 63
+  pg_parallel_workers: 32
   metric: dot
   m: 36
   efConstruction: 128
@@ -261,7 +261,7 @@ pgvector-laion-5m-m36-128:
 pgvector-laion-5m-m36-256:
   dataset: laion-5m-test-ip
   datasetType: hdf5
-  pg_parallel_workers: 63
+  pg_parallel_workers: 32
   metric: dot
   m: 36
   efConstruction: 256
@@ -281,7 +281,7 @@ pgvector-laion-5m-m36-256:
 pgvector-laion-5m-m36-512:
   dataset: laion-5m-test-ip
   datasetType: hdf5
-  pg_parallel_workers: 63
+  pg_parallel_workers: 32
   metric: dot
   m: 36
   efConstruction: 512

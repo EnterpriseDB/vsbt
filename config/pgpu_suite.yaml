@@ -5,7 +5,7 @@ pgpu-laion-5m-8192-test-ip:
   nlists: 8192
   samplingFactor: 256
   batchSize: 10000000
-  pg_parallel_workers: 63
+  pg_parallel_workers: 32
   top: 10
   benchmarks:
     20-1.0:
@@ -70,7 +70,7 @@ pgpu-laion-20m-35000-test-ip:
   nlists: 35000
   samplingFactor: 256
   batchSize: 10000000
-  pg_parallel_workers: 63
+  pg_parallel_workers: 32
   top: 10
   benchmarks:
     20-1.0:
@@ -135,7 +135,7 @@ pgpu-laion-100m-160000-test-ip:
   nlists: 160000
   samplingFactor: 256
   batchSize: 10000000
-  pg_parallel_workers: 63
+  pg_parallel_workers: 32
   top: 10
   benchmarks:
     20-1.0:
@@ -200,7 +200,7 @@ pgpu-laion-400m-320000-test-ip:
   nlists: 320000
   samplingFactor: 256
   batchSize: 10000000
-  pg_parallel_workers: 63
+  pg_parallel_workers: 32
   top: 10
   benchmarks:
     20-1.0:

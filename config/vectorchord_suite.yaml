@@ -4,7 +4,7 @@ vc-laion-5m-8192-test-ip:
   metric: ip
   lists: [90, 8192]
   samplingFactor: 64
-  pg_parallel_workers: 63
+  pg_parallel_workers: 32
   kmeans_hierarchical: true
   kmeans_dimension: 100
   residual_quantization: true
