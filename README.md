@@ -82,6 +82,7 @@ python <suite>.py -s config/<config>.yaml [options]
 | `--skip-index-creation` | Skip index build step | `false` |
 | `--overwrite-table` | Drop existing table first | `false` |
 | `--debug` | Enable debug logging | `false` |
+| `--debug-single-query` | Repeat same query to diagnose latency issues | `false` |
 
 ### Running pgvector Benchmarks
 
@@ -162,7 +163,7 @@ python pgvector_suite.py -s config/pgvector_suite.yaml \
 pgvector-laion-5m-m16-256:
   dataset: laion-5m-test-ip
   datasetType: hdf5
-  workers: 63
+  pg_parallel_workers: 63  # PostgreSQL parallel workers for index build
   metric: dot
   m: 16                    # HNSW M parameter
   efConstruction: 256      # HNSW ef_construction
@@ -182,10 +183,10 @@ vc-laion-5m-8192-test-ip:
   metric: ip
   lists: [90, 8192]        # Hierarchical IVF lists
   samplingFactor: 64
-  workers: 63
+  pg_parallel_workers: 63  # PostgreSQL parallel workers for index build
   kmeans_hierarchical: true
   kmeans_dimension: 100
-  residual_quantization: false
+  residual_quantization: true
   top: 10
   benchmarks:
     20-1.0:
@@ -203,14 +204,15 @@ pgpu-laion-100m-160000-test-ip:
   dataset: laion-100m-test-ip
   datasetType: hdf5
   metric: dot
-  nlists: 160000
+  lists: [500, 160000]     # Hierarchical IVF lists
   samplingFactor: 256
   batchSize: 10000000
-  workers: 63
+  pg_parallel_workers: 63  # PostgreSQL parallel workers for index build
+  residual_quantization: true
   top: 10
   benchmarks:
     50-1.0:
-      nprob: 50
+      nprob: 50,100
       epsilon: 1.0
 ```
 
