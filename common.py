@@ -12,7 +12,6 @@ import yaml
 from tqdm import tqdm
 
 import datasets
-import monitor.os_stats
 from monitor import (
     SystemMonitor,
     PGStatsCollector,
@@ -537,7 +536,7 @@ class TestSuite:
                 time.sleep(0.5)
 
     def create_index(self, suite_name: str, table_name: str, dataset: dict) -> tuple[
-        threading.Event, threading.Thread, threading.Thread]:
+        threading.Event, threading.Thread]:
         os.makedirs(f"./results/{suite_name}/index_build", exist_ok=True)
         conn = self.create_connection()
         print(f"Dropping index {table_name}_embedding_idx...", end="", flush=True)
@@ -551,22 +550,13 @@ class TestSuite:
 
         event = threading.Event()
 
-        # Only start OS monitor if devices are configured
-        os_monitor_thread = None
-        if self.devices:
-            os_monitor_thread = threading.Thread(
-                target=monitor.os_stats.monitor_and_generate_report,
-                args=(f"./results/{suite_name}/index_build", self.devices, event),
-            )
-            os_monitor_thread.start()
-
         index_monitor_thread = threading.Thread(
             target=self.monitor_index_build,
             args=(event,),
         )
         index_monitor_thread.start()
 
-        return event, os_monitor_thread, index_monitor_thread
+        return event, index_monitor_thread
 
     def calculate_index_size(self, suite_name: str, table_name: str):
         conn = self.create_connection()
@@ -693,17 +683,6 @@ class TestSuite:
 
     def run_benchmark(self, suite_name: str, name: str, table_name: str, result_dir: str, benchmark: dict,
                       dataset: dict, query_clients):
-        event = threading.Event()
-
-        # Only start OS monitor if devices are configured
-        os_monitor_thread = None
-        if self.devices:
-            os_monitor_thread = threading.Thread(
-                target=monitor.os_stats.monitor_and_generate_report,
-                args=(result_dir, self.devices, event),
-            )
-            os_monitor_thread.start()
-
         top = self.config[suite_name]["top"]
         metric = self.config[suite_name]["metric"]
         m = dataset["test"].shape[0]
@@ -727,9 +706,6 @@ class TestSuite:
             conn.close()
 
         self.results[suite_name]["metric_ops"] = metric_ops
-        event.set()
-        if os_monitor_thread:
-            os_monitor_thread.join()
 
         recall, qps, p50, p99 = calculate_metrics(results, top, m, query_clients)
         print(f"Top: {top} | Recall: {recall:.4f} | QPS: {qps:.2f} | P50: {p50:.2f}ms | P99: {p99:.2f}ms")

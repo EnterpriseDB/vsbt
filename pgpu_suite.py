@@ -141,7 +141,7 @@ class TestSuite(common.TestSuite):
 
     def create_index(self, suite_name: str, table_name: str, dataset: dict = None):
         """Create a GPU-accelerated IVF index using PGPU."""
-        event, os_monitor_thread, index_monitor_thread = super().create_index(
+        event, index_monitor_thread = super().create_index(
             suite_name, table_name, dataset
         )
 
@@ -208,8 +208,6 @@ class TestSuite(common.TestSuite):
 
         event.set()
         index_monitor_thread.join()
-        if os_monitor_thread:
-            os_monitor_thread.join()
 
     def sequential_bench(
         self,
