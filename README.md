@@ -1,14 +1,14 @@
 # Vector Search Benchmark Suite
 
-A comprehensive benchmarking tool for PostgreSQL vector search extensions. Compare performance across **pgvector**, **VectorChord**, and **PGPU** (GPU-accelerated) on datasets ranging from 1M to 1B vectors.
+A comprehensive benchmarking tool for PostgreSQL vector search extensions. Compare performance across **pgvector**, **VectorChord**, and **pgpu** (GPU-accelerated) on datasets ranging from 1M to 1B vectors.
 
 ## Supported Extensions
 
 | Extension | Index Type | Description |
 |-----------|------------|-------------|
-| **pgvector** | HNSW | Standard CPU-based approximate nearest neighbor search |
-| **VectorChord** | IVF (vchordrq) | Inverted file index with residual quantization |
-| **PGPU** | IVF via GPU | GPU-accelerated index building with VectorChord |
+| **[pgvector](https://github.com/pgvector/pgvector)** | [HNSW](https://arxiv.org/abs/1603.09320) | Standard CPU-based approximate nearest neighbor search |
+| **[vchordq](https://github.com/tensorchord/VectorChord)** | [IVF-RaBitQ](https://arxiv.org/abs/2405.12497) ([VectorChord](https://blog.vectorchord.ai/scaling-vector-search-to-1-billion-on-postgresql)) | High dimensionality & high performance vector quantization & compression |
+| **[pgpu](https://github.com/EnterpriseDB/pgpu)** | IVF-RaBitQ (VectoChord) | GPU-accelerated index building for VectorChord |
 
 ## Supported Datasets
 
