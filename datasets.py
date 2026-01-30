@@ -12,34 +12,19 @@ from tqdm import tqdm
 DATA_DIR = "./datasets"
 DATASETS = {
     # --- Standard HDF5 Datasets ---
-    "laion-1m-test-ip": {
-        "url": "https://edb-vector-datasets.s3.amazonaws.com/laion-1m-test-ip.hdf5",
-        "metric": "ip",
-        "type": "hdf5"
-    },
     "laion-5m-test-ip": {
-        "url": "https://edb-vector-datasets.s3.amazonaws.com/laion-5m-test-ip.hdf5",
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion-5m-test-ip.hdf5",
         "metric": "ip",
         "type": "hdf5"
     },
     "laion-20m-test-ip": {
-        "url": "https://edb-vector-datasets.s3.amazonaws.com/laion-20m-test-ip.hdf5",
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion-20m-test-ip.hdf5",
         "metric": "ip",
         "type": "hdf5"
     },
     "laion-100m-test-ip": {
-        "url": "https://edb-vector-datasets.s3.amazonaws.com/laion-100m-test-ip.hdf5",
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion-100m-test-ip.hdf5",
         "metric": "ip",
-        "type": "hdf5"
-    },
-    "glove-test-cos": {
-        "url": "https://edb-vector-datasets.s3.amazonaws.com/glove-test-cos.hdf5",
-        "metric": "cos",
-        "type": "hdf5"
-    },
-    "sift-128-euclidean": {
-        "url": "http://ann-benchmarks.com/sift-128-euclidean.hdf5",
-        "metric": "l2",
         "type": "hdf5"
     },
 
