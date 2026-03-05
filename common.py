@@ -425,6 +425,7 @@ class TestSuite:
         with conn.cursor() as acur:
             phase = "initializing"
             pbar = None
+            print("Building index (initializing)...", flush=True)
 
             while True:
                 if event.is_set():
@@ -444,9 +445,7 @@ class TestSuite:
 
                     if new_phase != phase:
                         phase = new_phase
-                        if pbar is None:
-                            print(f"Building index ({phase})...", flush=True)
-                        else:
+                        if pbar is not None:
                             pbar.set_description(f"Building index ({phase})")
 
                     if new_total > 0:
