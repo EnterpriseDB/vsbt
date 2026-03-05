@@ -264,85 +264,10 @@ class TestSuite:
     def prewarm_index(self, table_name: str):
         raise NotImplementedError("prewarm_index should be implemented in subclasses.")
 
-    def add_embeddings_from_hdf5(self, suite_name, name, train, pg_parallel_workers):
-        """Parallel add embeddings to the database from HDF5."""
-        n, dim = train.shape
-        start_time = time.perf_counter()
-
-        conn = self.create_connection()
-        if self.debug:
-            print(f"\n📦 Load Configuration (HDF5):")
-            print(f"    • Table:           {name}")
-            print(f"    • Rows:            {n:,}")
-            print(f"    • Dimensions:      {dim}")
-            print(f"    • Load Threads:    {self.max_load_threads}")
-            print(f"    • Chunk Size:      {self.chunk_size:,}")
-            print(f"    • Overwrite:       {self.overwrite_table}")
-            print()
-
-        if self.overwrite_table:
-            print(f"Dropping existing table {name}...", end="", flush=True)
-            conn.execute(f"DROP TABLE IF EXISTS {name}")
-            print(" done!")
-
-        try:
-            with conn.cursor() as cur:
-                cur.execute(f"SELECT 1 FROM {name} LIMIT 1")
-            table_exists = True
-        except psycopg.errors.UndefinedTable:
-            table_exists = False
-
-        if table_exists:
-            print(f"Table {name} already exists, using it")
-            return
-
-        conn.execute(f"CREATE TABLE {name} (id integer, embedding vector({dim}))")
-        conn.execute(f"ALTER TABLE {name} SET (parallel_workers = {pg_parallel_workers})")
-        conn.close()
-
-        max_load_threads = self.max_load_threads
-
-        def load_chunk(chunk_start, chunk_len):
-            data = train[chunk_start: chunk_start + chunk_len]
-            conn = self.create_connection()
-            with conn.cursor().copy(
-                    f"COPY {name} (id, embedding) FROM STDIN WITH (FORMAT BINARY)"
-            ) as copy:
-                copy.set_types(["integer", "vector"])
-                for i, vec in enumerate(data):
-                    copy.write_row((chunk_start + i, vec))
-                while conn.pgconn.flush() == 1:
-                    time.sleep(0)
-            conn.close()
-
-        chunk_size = self.chunk_size
-        pbar = tqdm(desc="Adding embeddings", total=n, ncols=80, unit_scale=True, unit="rows")
-        threads = []
-        for i in range(0, n, chunk_size):
-            chunk_start = i
-            chunk_len = min(chunk_size, n - i)
-            t = threading.Thread(
-                target=load_chunk, args=(chunk_start, chunk_len))
-            threads.append(t)
-
-            if len(threads) == max_load_threads or chunk_start + chunk_len >= n:
-                for thread in threads:
-                    thread.start()
-                for thread in threads:
-                    thread.join()
-                    pbar.update(chunk_size)
-                threads = []
-        pbar.close()
-
-        end_time = time.perf_counter()
-        self.results[suite_name]["load_time"] = int(round(end_time - start_time))
-        print(f'Dataset load time: {self.results[suite_name]["load_time"]}s')
-
-    def add_embeddings_from_npy(self, suite_name, name, ds: dict):
+    def add_embeddings(self, suite_name: str, table_name: str, ds: dict, pg_parallel_workers: int = None):
         """
-        Add embeddings from NPY files to the database.
-        - Deep1B (mmap) -> Uses Optimized Chunk Loading.
-        - LAION (generator) -> Uses Standard Sequential Loading.
+        Add embeddings to the database.
+        Handles HDF5, NPY (mmap), and generator data sources.
         """
         dim = ds["dim"]
         n = ds["num"]
@@ -351,63 +276,74 @@ class TestSuite:
         is_sliceable = hasattr(data, "__getitem__") and hasattr(data, "shape")
         conn = self.create_connection()
 
+        if self.debug:
+            print(f"\n📦 Load Configuration:")
+            print(f"    • Table:           {table_name}")
+            print(f"    • Rows:            {n:,}")
+            print(f"    • Dimensions:      {dim}")
+            print(f"    • Load Threads:    {self.max_load_threads}")
+            print(f"    • Chunk Size:      {self.chunk_size:,}")
+            print(f"    • Overwrite:       {self.overwrite_table}")
+            print()
+
         # --- Table Setup ---
         if self.overwrite_table:
-            print(f"Dropping existing table {name}...", end="", flush=True)
-            conn.execute(f"DROP TABLE IF EXISTS {name}")
+            print(f"Dropping existing table {table_name}...", end="", flush=True)
+            conn.execute(f"DROP TABLE IF EXISTS {table_name}")
             print(" done!")
 
         try:
             with conn.cursor() as cur:
-                cur.execute(f"SELECT 1 FROM {name} LIMIT 1")
+                cur.execute(f"SELECT 1 FROM {table_name} LIMIT 1")
             table_exists = True
         except psycopg.errors.UndefinedTable:
             table_exists = False
 
         if table_exists:
-            print(f"Table {name} already exists, using it")
+            print(f"Table {table_name} already exists, using it")
             conn.close()
             return
 
-        print(f"Creating TABLE {name}...")
-        conn.execute(f"CREATE TABLE {name} (id integer, embedding vector({dim}))")
+        print(f"Creating TABLE {table_name}...")
+        conn.execute(f"CREATE TABLE {table_name} (id integer, embedding vector({dim}))")
+        if pg_parallel_workers:
+            conn.execute(f"ALTER TABLE {table_name} SET (parallel_workers = {pg_parallel_workers})")
         conn.commit()
         conn.close()
 
         # --- Loading Data ---
         start_time = time.perf_counter()
-
-        # Default chunk size 100k for smoothness
         chunk_size = self.chunk_size if self.chunk_size else 100_000
+        num_threads = self.max_load_threads or 1
 
         if is_sliceable:
-            # === OPTIMIZED PATH (Deep1B) ===
-            num_threads = self.max_load_threads or 1
-
+            # === SLICEABLE PATH (HDF5, Deep1B mmap) ===
             def load_chunk(chunk_start, chunk_len):
                 t_conn = self.create_connection()
                 chunk_data = data[chunk_start: chunk_start + chunk_len]
 
                 # Cast if needed
-                if chunk_data.dtype != np.float32:
+                if hasattr(chunk_data, 'dtype') and chunk_data.dtype != np.float32:
                     chunk_data = chunk_data.astype(np.float32)
 
                 with t_conn.cursor().copy(
-                        f"COPY {name} (id, embedding) FROM STDIN WITH (FORMAT BINARY)"
+                        f"COPY {table_name} (id, embedding) FROM STDIN WITH (FORMAT BINARY)"
                 ) as copy:
                     copy.set_types(["integer", "vector"])
                     for i, vec in enumerate(chunk_data):
                         copy.write_row((chunk_start + i, vec))
-
                     while t_conn.pgconn.flush() == 1:
                         time.sleep(0)
                 t_conn.close()
 
-            # Initialize Progress Bar in "rows"
-            pbar = tqdm(desc="Adding embeddings", total=n, unit="rows", ncols=80, unit_scale=True)
+            if num_threads > 1:
+                print(f"Parallel load enabled for {table_name}. Threads: {num_threads}")
+            else:
+                print(f"Sequential load enabled for {table_name}")
 
-            if num_threads > 1: # Careful with python GIL and I/O bound
-                print(f"Parallel load enabled for {name}. Threads: {num_threads}")
+            pbar = tqdm(desc="Adding embeddings", total=n, unit=" rows", ncols=80, unit_scale=True)
+
+            if num_threads > 1:
                 threads = []
                 batch_rows = 0
                 for i in range(0, n, chunk_size):
@@ -425,7 +361,6 @@ class TestSuite:
                         threads = []
                         batch_rows = 0
             else:
-                print(f"Sequential load enabled for {name} (Optimized Mmap)")
                 for i in range(0, n, chunk_size):
                     chunk_len = min(chunk_size, n - i)
                     load_chunk(i, chunk_len)
@@ -435,13 +370,12 @@ class TestSuite:
 
         else:
             # === GENERATOR PATH (LAION) ===
-            print(f"Sequential load for {name} (Generator source)")
+            print(f"Sequential load for {table_name} (Generator source)")
             conn = self.create_connection()
-            # Initialize Pbar for generator
-            pbar = tqdm(desc="Adding embeddings", total=n, unit="rows", ncols=80, unit_scale=True)
+            pbar = tqdm(desc="Adding embeddings", total=n, unit=" rows", ncols=80, unit_scale=True)
 
             with conn.cursor().copy(
-                    f"COPY {name} (id, embedding) FROM STDIN WITH (FORMAT BINARY)"
+                    f"COPY {table_name} (id, embedding) FROM STDIN WITH (FORMAT BINARY)"
             ) as copy:
                 copy.set_types(["integer", "vector"])
                 for i, vec in data:
@@ -789,13 +723,10 @@ class TestSuite:
         if not self.skip_add_embeddings:
             if self.system_monitor:
                 self.system_monitor.mark_phase("load_start")
-            ds_type = ds["type"]
-            if ds_type == "hdf5":
-                self.add_embeddings_from_hdf5(name, table_name, ds["train"], self.config[name]["pg_parallel_workers"])
-                if hasattr(ds["train"], "close"):
-                    ds["train"].close()
-            elif ds_type in ["laion-multipart", "deep1b-mmap"]:
-                self.add_embeddings_from_npy(name, table_name, ds)
+            pg_parallel_workers = self.config[name].get("pg_parallel_workers")
+            self.add_embeddings(name, table_name, ds, pg_parallel_workers=pg_parallel_workers)
+            if hasattr(ds["train"], "close"):
+                ds["train"].close()
 
             # Free memory
             del ds["train"]

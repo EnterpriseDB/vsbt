@@ -160,13 +160,14 @@ class TestSuite(common.TestSuite):
 
         build_time = int(round(time.perf_counter() - start_time))
         self.results[suite_name]["index_build_time"] = build_time
-        print(f"Index build time: {build_time}s")
 
+        conn.execute("CHECKPOINT")
         conn.close()
-        print("Index built successfully.")
-
         event.set()
         index_monitor_thread.join()
+
+        print(f"Index build time: {build_time}s")
+        print("Index built successfully.")
 
     def sequential_bench(
         self,
