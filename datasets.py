@@ -49,9 +49,9 @@ DATASETS = {
         "base_dir": os.path.join(DATA_DIR, "deep1b"),
         # Direct URLs to your pre-converted NPY files and the IBIN ground truth
         "urls": {
-            "base": "https://enterprisedb-vector-datasets.s3.amazonaws.com/deep1b/deep1b_base.npy",
-            "query": "https://enterprisedb-vector-datasets.s3.amazonaws.com/deep1b/deep1b_queries.npy",
-            "groundtruth": "https://enterprisedb-vector-datasets.s3.amazonaws.com/deep1b/deep1b_groundtruth.npy"
+            "base": "https://enterprisedb-vector-datasets.s3.amazonaws.com/deep1B/deep1b_base.npy",
+            "query": "https://enterprisedb-vector-datasets.s3.amazonaws.com/deep1B/deep1b_queries.npy",
+            "groundtruth": "https://enterprisedb-vector-datasets.s3.amazonaws.com/deep1B/deep1b_groundtruth.npy"
         },
         # Local filenames to save them as
         "files": {
