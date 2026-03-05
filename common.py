@@ -306,7 +306,7 @@ class TestSuite:
 
         print(f"Creating TABLE {table_name}...")
         conn.execute(f"CREATE TABLE {table_name} (id integer, embedding vector({dim}))")
-        if pg_parallel_workers:
+        if pg_parallel_workers is not None:
             conn.execute(f"ALTER TABLE {table_name} SET (parallel_workers = {pg_parallel_workers})")
         conn.commit()
         conn.close()
@@ -323,7 +323,7 @@ class TestSuite:
                 chunk_data = data[chunk_start: chunk_start + chunk_len]
 
                 # Cast if needed
-                if hasattr(chunk_data, 'dtype') and chunk_data.dtype != np.float32:
+                if chunk_data.dtype != np.float32:
                     chunk_data = chunk_data.astype(np.float32)
 
                 with t_conn.cursor().copy(
