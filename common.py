@@ -472,8 +472,14 @@ class TestSuite:
             print(" done!")
         except Exception:
             print(" failed!")
-        finally:
-            conn.close()
+
+        pg_parallel_workers = self.config[suite_name].get("pg_parallel_workers")
+        if pg_parallel_workers is not None:
+            conn.execute(f"ALTER TABLE {table_name} SET (parallel_workers = {pg_parallel_workers})")
+        else:
+            conn.execute(f"ALTER TABLE {table_name} RESET (parallel_workers)")
+
+        conn.close()
 
         event = threading.Event()
 

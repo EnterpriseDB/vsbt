@@ -1,0 +1,19 @@
+pgvector-laion-100m-m16-128:
+  dataset: laion-100m-test-ip
+  datasetType: hdf5
+  pg_parallel_workers: 64
+  metric: dot
+  m: 16
+  efConstruction: 128
+  top: 10
+  benchmarks:
+    "10": { efSearch: 10 }
+    "20": { efSearch: 20 }
+    "40": { efSearch: 40 }
+    "60": { efSearch: 60 }
+    "80": { efSearch: 80 }
+    "120": { efSearch: 120 }
+    "200": { efSearch: 200 }
+    "400": { efSearch: 400 }
+    "600": { efSearch: 600 }
+    "800": { efSearch: 800 }
