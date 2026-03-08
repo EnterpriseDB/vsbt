@@ -674,6 +674,56 @@ class TestSuite:
             "p99_latency": p99,
         }
 
+    def print_summary_table(self, suite_name: str):
+        """Print a summary table of all benchmark results for a suite."""
+        benchmarks = self.config[suite_name].get("benchmarks", {})
+        results = self.results.get(suite_name, {})
+
+        if not benchmarks:
+            return
+
+        # Determine columns based on benchmark parameters
+        first_bench = next(iter(benchmarks.values()))
+        has_ef_search = "efSearch" in first_bench
+        has_nprob = "nprob" in first_bench
+
+        # Build header and rows
+        if has_ef_search:
+            header = "| EF Search | Recall | QPS    | P50 (ms) | P99 (ms) |"
+            sep =    "|-----------|--------|--------|----------|----------|"
+        elif has_nprob:
+            header = "| Probes    | Epsilon | Recall | QPS    | P50 (ms) | P99 (ms) |"
+            sep =    "|-----------|---------|--------|--------|----------|----------|"
+        else:
+            return
+
+        print(f"\n{'=' * len(sep)}")
+        print(f"  Results Summary: {suite_name}")
+        print(f"{'=' * len(sep)}")
+        print(header)
+        print(sep)
+
+        for name, benchmark in benchmarks.items():
+            r = results.get(name, {})
+            if "recall" not in r:
+                continue
+
+            if has_ef_search:
+                print(f"| {benchmark['efSearch']:<9} "
+                      f"| {r['recall']:.4f} "
+                      f"| {r['qps']:>6.2f} "
+                      f"| {r['p50_latency']:>8.2f} "
+                      f"| {r['p99_latency']:>8.2f} |")
+            elif has_nprob:
+                print(f"| {benchmark['nprob']:<9} "
+                      f"| {benchmark['epsilon']:<7} "
+                      f"| {r['recall']:.4f} "
+                      f"| {r['qps']:>6.2f} "
+                      f"| {r['p50_latency']:>8.2f} "
+                      f"| {r['p99_latency']:>8.2f} |")
+
+        print()
+
     def run_benchmarks(self, suite_name: str, table_name: str, dataset: dict, query_clients):
         # Prewarm index once before all benchmarks
         self.prewarm_index(table_name)
@@ -684,6 +734,8 @@ class TestSuite:
             os.makedirs(result_dir, exist_ok=True)
             self.results[suite_name][name] = {}
             self.run_benchmark(suite_name, name, table_name, result_dir, benchmark, dataset, query_clients)
+
+        self.print_summary_table(suite_name)
 
     def generate_markdown_result(self):
         return NotImplementedError("generate_markdown_result method should be implemented in subclasses.")
