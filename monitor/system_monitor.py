@@ -635,8 +635,10 @@ def generate_system_report(results_dir: str) -> Path:
         except (PermissionError, OSError):
             continue
 
+    content = "\n".join(lines)
+
     # Write report
     with open(filepath, "w") as f:
-        f.write("\n".join(lines))
+        f.write(content)
 
-    return filepath
+    return filepath, content

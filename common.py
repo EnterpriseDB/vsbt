@@ -121,6 +121,23 @@ def build_arg_parse(parser: argparse.ArgumentParser):
         required=False,
     )
 
+    parser.add_argument(
+        "--build-only",
+        help="Only build the index, skip query benchmarks",
+        action="store_true",
+        default=False,
+        required=False,
+    )
+
+    parser.add_argument(
+        "--no-fs-cache",
+        help="Drop filesystem cache after prewarm to measure pure shared_buffers performance",
+        action="store_true",
+        default=False,
+        required=False,
+    )
+
+
 def get_keepalive_kwargs() -> dict:
     """Get keepalive arguments for the database connection."""
 
@@ -213,7 +230,9 @@ class TestSuite:
                  max_load_threads: int = 4,
                  debug: bool = False,
                  overwrite_table: bool = False,
-                 debug_single_query: bool = False):
+                 debug_single_query: bool = False,
+                 build_only: bool = False,
+                 no_fs_cache: bool = False):
         self.suite_file = suite_file
         self.config = load_suite_config(suite_file)
         self.url = url
@@ -229,6 +248,8 @@ class TestSuite:
         self.debug = debug
         self.overwrite_table = overwrite_table
         self.debug_single_query = debug_single_query
+        self.build_only = build_only
+        self.no_fs_cache = no_fs_cache
 
         # Check if database is local or remote
         self.is_local_db = is_local_database(url)
@@ -274,7 +295,9 @@ class TestSuite:
                 idx_size, sb_size = row
                 idx_gb = idx_size / (1024 ** 3)
                 sb_gb = sb_size / (1024 ** 3)
-                print(f"Index size: {idx_gb:.1f} GB, shared_buffers: {sb_gb:.1f} GB")
+                coverage = min(100.0, 100.0 * sb_size / idx_size) if idx_size > 0 else 0
+                print(f"Index size: {idx_gb:.1f} GB, shared_buffers: {sb_gb:.1f} GB "
+                      f"(index coverage: {coverage:.1f}%)")
                 if idx_size > sb_size:
                     print(f"WARNING: Index ({idx_gb:.1f} GB) exceeds shared_buffers ({sb_gb:.1f} GB). "
                           f"Prewarming will not fully cache the index — query performance may suffer. "
@@ -697,8 +720,13 @@ class TestSuite:
         else:
             return
 
+        sb = results.get("shared_buffers", "N/A")
+        mwm = results.get("maintenance_work_mem", "N/A")
+        idx_size = results.get("index_size", "N/A")
+
         print(f"\n{'=' * len(sep)}")
         print(f"  Results Summary: {suite_name}")
+        print(f"  shared_buffers: {sb} | maintenance_work_mem: {mwm} | index_size: {idx_size}")
         print(f"{'=' * len(sep)}")
         print(header)
         print(sep)
@@ -724,9 +752,26 @@ class TestSuite:
 
         print()
 
+    def _drop_fs_cache(self):
+        """Drop OS filesystem cache. Requires root/sudo."""
+        import subprocess
+        print("Dropping filesystem cache...", end="", flush=True)
+        try:
+            subprocess.run(
+                ["sudo", "sh", "-c", "sync; echo 3 > /proc/sys/vm/drop_caches"],
+                check=True,
+            )
+            print(" done!")
+        except subprocess.CalledProcessError as e:
+            print(f" failed! ({e})")
+            print("WARNING: Could not drop filesystem cache. Run with sudo or configure passwordless sudo.")
+
     def run_benchmarks(self, suite_name: str, table_name: str, dataset: dict, query_clients):
         # Prewarm index once before all benchmarks
         self.prewarm_index(table_name)
+
+        if self.no_fs_cache:
+            self._drop_fs_cache()
 
         for name, benchmark in self.config[suite_name]["benchmarks"].items():
             print(f"Running benchmark: {benchmark}")
@@ -743,6 +788,9 @@ class TestSuite:
     def run_suite(self, name: str):
         os.makedirs(f"./results/{name}", exist_ok=True)
         self.results[name] = {}
+        self.results[name]["fs_cache"] = not self.no_fs_cache
+        if self._system_report_content:
+            self.results[name]["system_report"] = self._system_report_content
 
         dataset_name = self.config[name]["dataset"]
         table_name = dataset_name.replace("-", "_")
@@ -837,13 +885,18 @@ class TestSuite:
         else:
             print("Skipping index creation as requested.")
 
+        if not self.build_only:
+            if self.system_monitor:
+                self.system_monitor.mark_phase("benchmark_start")
+            self.run_benchmarks(name, table_name, ds, self.query_clients)
+            if self.system_monitor:
+                self.system_monitor.mark_phase("benchmark_end")
+            self.pg_stats_collector.capture_snapshot("after_benchmark", table_name)
+        else:
+            print("Build-only mode: skipping benchmarks.")
+
         if self.system_monitor:
-            self.system_monitor.mark_phase("benchmark_start")
-        self.run_benchmarks(name, table_name, ds, self.query_clients)
-        if self.system_monitor:
-            self.system_monitor.mark_phase("benchmark_end")
-            self.system_monitor.stop()  # Stop background monitoring
-        self.pg_stats_collector.capture_snapshot("after_benchmark", table_name)
+            self.system_monitor.stop()
 
         conn.close()
 
@@ -885,8 +938,9 @@ class TestSuite:
                 self.devices = []
 
         # Generate system report only for local databases
+        self._system_report_content = None
         if self.is_local_db:
-            generate_system_report("./results")
+            _, self._system_report_content = generate_system_report("./results")
 
         for suite_name in self.config:
             print(f"Running test: {suite_name}")

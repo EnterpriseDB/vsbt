@@ -280,6 +280,8 @@ def main():
         debug=args.debug,
         overwrite_table=args.overwrite_table,
         debug_single_query=args.debug_single_query,
+        build_only=args.build_only,
+        no_fs_cache=args.no_fs_cache,
     )
 
     test_suite.run()
