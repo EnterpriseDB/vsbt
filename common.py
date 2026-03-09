@@ -771,8 +771,27 @@ class TestSuite:
 
         self.init_ext(name)
 
-        # Initialize PG stats collector
+        # Capture PostgreSQL settings for this run
         conn = self.create_connection()
+        try:
+            rows = conn.execute(
+                "SELECT name, setting, unit FROM pg_settings "
+                "WHERE name IN ('shared_buffers', 'maintenance_work_mem')"
+            ).fetchall()
+            for setting_name, setting_val, unit in rows:
+                val = int(setting_val)
+                if unit == '8kB':
+                    size_mb = val * 8 / 1024
+                    self.results[name][setting_name] = f"{size_mb:.0f}MB" if size_mb < 1024 else f"{size_mb / 1024:.0f}GB"
+                elif unit == 'kB':
+                    size_mb = val / 1024
+                    self.results[name][setting_name] = f"{size_mb:.0f}MB" if size_mb < 1024 else f"{size_mb / 1024:.0f}GB"
+                else:
+                    self.results[name][setting_name] = f"{setting_val}{unit}" if unit else setting_val
+        except psycopg.Error:
+            pass
+
+        # Initialize PG stats collector
         self.pg_stats_collector = PGStatsCollector(conn)
 
         # Only capture baseline if table already exists (skip_add_embeddings case)

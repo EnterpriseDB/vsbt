@@ -122,8 +122,10 @@ class TestSuite(common.TestSuite):
         self.check_index_fits_shared_buffers(conn, index_name)
         print("Prewarming the index...", end="", flush=True)
         try:
+            prewarm_start = time.perf_counter()
             conn.execute(f"SELECT pg_prewarm('{index_name}')")
-            print(" done!")
+            prewarm_time = time.perf_counter() - prewarm_start
+            print(f" done! ({prewarm_time:.1f}s)")
         except psycopg.Error as e:
             print(f" failed! ({e.diag.message_primary})")
             self.debug_log(f"Prewarm failed: {e}")
@@ -166,6 +168,15 @@ class TestSuite(common.TestSuite):
 
         return int(num_vectors * avg_per_node)
 
+    # On-disk index is ~65% of the in-memory graph size.
+    # Observed: 993 GB in-memory → 646 GB on disk (dim=96, m=16, 1B vectors).
+    HNSW_ONDISK_RATIO = 0.65
+
+    @classmethod
+    def estimate_hnsw_index_size(cls, graph_memory_bytes: int) -> int:
+        """Estimate on-disk HNSW index size from in-memory graph size."""
+        return int(graph_memory_bytes * cls.HNSW_ONDISK_RATIO)
+
     def create_index(self, suite_name: str, table_name: str, dataset: dict):
         """Create an HNSW index using pgvector."""
         event, index_monitor_thread = super().create_index(
@@ -185,8 +196,12 @@ class TestSuite(common.TestSuite):
             est_bytes = self.estimate_hnsw_graph_memory(num_vectors, dim, m)
             est_gb = est_bytes / (1024 ** 3)
             est_mwm = f"{int(est_gb + 1)}GB"
+            est_idx_bytes = self.estimate_hnsw_index_size(est_bytes)
+            est_idx_gb = est_idx_bytes / (1024 ** 3)
             print(f"Estimated HNSW graph memory: {est_gb:.1f} GB "
                   f"(recommended maintenance_work_mem >= '{est_mwm}')")
+            print(f"Estimated on-disk index size: {est_idx_gb:.1f} GB "
+                  f"(recommended shared_buffers >= '{int(est_idx_gb + 1)}GB' for query serving)")
 
         if self.debug:
             print(f"\n🔧 Index Configuration (HNSW):")

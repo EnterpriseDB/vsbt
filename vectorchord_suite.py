@@ -118,10 +118,12 @@ class TestSuite(common.TestSuite):
         self.check_index_fits_shared_buffers(conn, index_name)
         print("Prewarming the index...", end="", flush=True)
         try:
+            prewarm_start = time.perf_counter()
             conn.execute(
                 f"SELECT vchordrq_prewarm('{index_name}'::regclass)"
             )
-            print(" done!")
+            prewarm_time = time.perf_counter() - prewarm_start
+            print(f" done! ({prewarm_time:.1f}s)")
         except psycopg.Error as e:
             print(f" failed! ({e.diag.message_primary})")
             self.debug_log(f"Prewarm failed: {e}")

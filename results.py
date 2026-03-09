@@ -111,6 +111,8 @@ class ResultsManager:
             "suite_type": suite_type,
             "test_name": test_name,
             "benchmark_name": benchmark_name,
+            "shared_buffers": results.get("shared_buffers", "N/A"),
+            "maintenance_work_mem": results.get("maintenance_work_mem", "N/A"),
             "dataset": config.get("dataset", "N/A"),
             "metric": config.get("metric", "N/A"),
             "pg_parallel_workers": config.get("pg_parallel_workers", "N/A"),
@@ -370,12 +372,15 @@ class ResultsManager:
             pg_stats: Pre-formatted markdown string with PostgreSQL statistics
             system_dashboard_path: Path to system metrics dashboard image
         """
-        filepath = self.reports_dir / f"{test_name}_report.md"
+        filepath = self.reports_dir / f"{test_name}_{self._current_run_id}_report.md"
 
         # Generate charts first
         recall_qps_chart = self.generate_recall_vs_qps_chart(test_name, results, config)
         latency_chart = self.generate_latency_chart(test_name, results, config)
         build_time_chart = self.generate_build_time_chart(test_name, results, config)
+
+        shared_buffers = results.get("shared_buffers", "N/A")
+        maintenance_work_mem = results.get("maintenance_work_mem", "N/A")
 
         lines = [
             f"# Benchmark Report: {test_name}",
@@ -383,6 +388,8 @@ class ResultsManager:
             f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
             f"**Host:** {self.hostname}",
             f"**Suite Type:** {suite_type}",
+            f"**shared_buffers:** {shared_buffers}",
+            f"**maintenance_work_mem:** {maintenance_work_mem}",
             "",
             "---",
             "",

@@ -376,6 +376,31 @@ For example, 1B vectors with dim=96 and m=16 requires ~**993 GB** of `maintenanc
 
 If the graph exceeds `maintenance_work_mem`, pgvector flushes the in-memory graph to disk and switches to a much slower on-disk insertion mode for remaining tuples.
 
+### Estimating On-Disk Index Size
+
+The on-disk HNSW index is approximately **65% of the in-memory graph size**. This ratio is useful for planning `shared_buffers` for query serving:
+
+```
+on-disk index ≈ 0.65 × in-memory graph
+```
+
+For example, 1B vectors with dim=96 and m=16: 0.65 × 993 GB ≈ **645 GB** (observed: 646 GB).
+
+### Sizing `shared_buffers` for Query Serving
+
+For best query performance, the entire index should fit in `shared_buffers`. If it doesn't, avoid the middle ground — due to double buffering between `shared_buffers` and OS page cache, a partially-filled `shared_buffers` performs **worse** than a tiny one.
+
+Benchmark results on a 1B vector HNSW index (646 GB) at various `shared_buffers` sizes:
+
+| shared_buffers | efSearch=200 QPS | efSearch=800 QPS | Notes |
+|---|---|---|---|
+| 16GB | 59.04 | 17.79 | Index in OS page cache — good |
+| 128GB | 37.65 | 12.85 | Double buffering — worst |
+| 256GB | 29.61 | 14.37 | Double buffering — worst |
+| 700GB | 95.14 | 36.52 | Index fully in shared_buffers — best |
+
+When `shared_buffers` is too small to hold the index, PostgreSQL and the OS cache overlapping copies of the same pages, wasting RAM. With 16GB, nearly all RAM goes to page cache and the index fits. With 700GB, shared_buffers holds the full index with faster access than page cache. The middle ground wastes RAM on double copies and neither cache is large enough.
+
 ### Example
 
 Consider a machine with 512GB of RAM building an HNSW index on a 200GB table:
