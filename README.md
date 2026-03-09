@@ -84,6 +84,8 @@ python <suite>.py -s config/<config>.yaml [options]
 | `--max-load-threads` | Threads for loading embeddings | `4` |
 | `--skip-add-embeddings` | Skip data loading step | `false` |
 | `--skip-index-creation` | Skip index build step | `false` |
+| `--build-only` | Build index only, skip query benchmarks | `false` |
+| `--no-fs-cache` | Drop filesystem cache after prewarm (requires sudo) | `false` |
 | `--overwrite-table` | Drop existing table first | `false` |
 | `--debug` | Enable debug logging | `false` |
 | `--debug-single-query` | Repeat same query to diagnose latency issues | `false` |
@@ -219,27 +221,27 @@ pgpu-laion-100m-160000-test-ip:
 
 ## Output
 
-Results are organized in the following structure:
+Results are organized per test name, with each test accumulating results across multiple runs:
 
 ```
 results/
-├── raw/                                    # Individual run data (JSON)
-│   └── {suite_name}_{timestamp}.json
-├── consolidated/                           # Accumulated results across runs
-│   └── all_results.csv
-├── reports/                                # Generated reports
-│   ├── {suite_name}_report.md              # Markdown report with tables
-│   └── charts/
-│       ├── {suite_name}_recall_vs_qps.png  # Recall vs QPS scatter plot
-│       ├── {suite_name}_latency.png        # P50/P99 latency comparison
-│       └── {suite_name}_build_times.png    # Build time breakdown
-└── {suite_name}/                           # OS monitoring data
-    ├── system_report.txt                   # Hardware information
-    ├── cpu_utilization.csv/png             # CPU metrics over time
-    ├── *_io_iops.csv                       # IOPS data per device
-    ├── *_io_bandwidth.csv                  # Bandwidth data per device
-    └── *_io_latency.csv                    # IO latency data
+├── all_results.csv                        # Global CSV (append-only, all runs)
+├── {test_name}/                           # One folder per YAML test name
+│   ├── report.md                          # Incremental report (all runs for this test)
+│   ├── runs/                              # Raw data per run
+│   │   └── {run_id}.json
+│   ├── charts/                            # Charts (latest run)
+│   │   ├── recall_vs_qps.png
+│   │   ├── latency.png
+│   │   ├── build_times.png
+│   │   └── system_dashboard.png
+│   └── index_build/                       # Index build monitoring data
+└── comparisons/                           # Cross-test comparison charts
+    ├── recall_vs_qps_{timestamp}.png
+    └── recall_vs_p99_{timestamp}.png
 ```
+
+The `report.md` is **incremental** — it is regenerated from all stored run JSONs each time a benchmark completes. Running the same test with different `shared_buffers` or `--no-fs-cache` adds a new run section to the existing report, building a complete history.
 
 ### Generated Reports
 
@@ -247,12 +249,46 @@ Each benchmark run generates:
 
 | Output | Description |
 |--------|-------------|
-| **Markdown Report** | Configuration, build metrics, results table, and embedded charts |
+| **Incremental Report** | `report.md` with system info, configuration, build metrics across all runs, and benchmark tables per run |
 | **Recall vs QPS Chart** | Scatter plot showing recall/throughput tradeoff |
 | **Latency Chart** | Bar chart comparing P50/P99 latencies across configs |
 | **Build Time Chart** | Horizontal bar showing load/clustering/index build breakdown |
-| **Raw JSON** | Complete results data for programmatic access |
-| **Consolidated CSV** | Append-only CSV accumulating results across all runs |
+| **Raw JSON** | Complete results data per run for programmatic access |
+| **Consolidated CSV** | Append-only CSV with shared_buffers, maintenance_work_mem, and fs_cache columns |
+
+### Comparing Runs
+
+Use `chart_compare.py` to generate comparison charts across different runs:
+
+```bash
+# List all available runs
+python chart_compare.py --list
+
+# Compare two specific runs by ID
+python chart_compare.py --runs 20260309010000 20260309020000
+
+# Compare latest runs for specific tests (e.g., pgvector vs vectorchord)
+python chart_compare.py --tests pgvector-laion-1B-m16-128 vc-deep1B-test-l2
+
+# Filter by shared_buffers size
+python chart_compare.py --tests pgvector-... vc-... --sb 700GB
+
+# Filter by cache mode
+python chart_compare.py --tests pgvector-... vc-... --cache-mode with
+```
+
+Generates Recall vs QPS and Recall vs P99 charts with labeled data points (efSearch or nprob/epsilon) and distinct colors/markers per series.
+
+### Build-Only and No-FS-Cache Modes
+
+```bash
+# Build the index without running query benchmarks
+python pgvector_suite.py -s config/pgvector_suite_1B.yaml --build-only --skip-add-embeddings
+
+# Run benchmarks with filesystem cache dropped after prewarm
+# (isolates shared_buffers performance from OS page cache)
+python pgvector_suite.py -s config/pgvector_suite_1B.yaml --no-fs-cache --skip-add-embeddings --skip-index-creation
+```
 
 ### Metrics Reported
 
@@ -313,6 +349,7 @@ vector-search/
 ├── datasets.py               # Dataset download and loading
 ├── results.py                # Results management and visualization
 ├── compare_runs.py           # Historical benchmark comparison utility
+├── chart_compare.py          # Cross-run comparison chart generator
 ├── pgvector_suite.py         # pgvector HNSW benchmarks
 ├── vectorchord_suite.py      # VectorChord IVF benchmarks
 ├── pgpu_suite.py             # GPU-accelerated benchmarks
@@ -332,9 +369,12 @@ vector-search/
 │   ├── convert_deep1b.py     # Deep1B format converter
 │   └── verify_deep1B.py      # File integrity checker
 └── results/                  # Output directory (generated)
-    ├── raw/                  # JSON data per run
-    ├── consolidated/         # Accumulated CSV
-    └── reports/              # Markdown reports and charts
+    ├── all_results.csv       # Global CSV (all runs)
+    ├── {test_name}/          # Per-test results
+    │   ├── report.md         # Incremental report
+    │   ├── runs/*.json       # Raw data per run
+    │   └── charts/*.png      # Charts
+    └── comparisons/          # Cross-test comparison charts
 ```
 
 ## pgvector: Memory Tuning for Large HNSW Index Builds
