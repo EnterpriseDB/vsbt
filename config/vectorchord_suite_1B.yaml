@@ -4,7 +4,6 @@ vc-deep1B-test-l2:
   metric: l2
   samplingFactor: 256
   lists: [400, 160000]
-  batchSize: 1000000
   kmeans_hierarchical: true
   residual_quantization: true
   build_threads: 32

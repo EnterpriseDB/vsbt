@@ -299,9 +299,7 @@ class TestSuite:
                 print(f"Index size: {idx_gb:.1f} GB, shared_buffers: {sb_gb:.1f} GB "
                       f"(index coverage: {coverage:.1f}%)")
                 if idx_size > sb_size:
-                    print(f"WARNING: Index ({idx_gb:.1f} GB) exceeds shared_buffers ({sb_gb:.1f} GB). "
-                          f"Prewarming will not fully cache the index — query performance may suffer. "
-                          f"Consider increasing shared_buffers.")
+                    print(f"WARNING: Index ({idx_gb:.1f} GB) > shared_buffers ({sb_gb:.1f} GB), prewarm will be partial.")
         except psycopg.Error:
             pass
 
@@ -488,13 +486,14 @@ class TestSuite:
                     new_phase = result[2] or phase
 
                     if new_phase != phase:
-                        phase = new_phase
                         if pbar is not None:
-                            pbar.set_description(f"Building index ({phase})")
+                            pbar.close()
+                            pbar = None
+                        phase = new_phase
+                        print(f"Building index ({phase})...", flush=True)
 
                     if new_total > 0:
                         if pbar is None:
-                            # Create progress bar once we have a real total
                             pbar = tqdm(smoothing=0.0, total=new_total,
                                         desc=f"Building index ({phase})", ncols=100,
                                         bar_format="{desc}: {percentage:3.0f}%|{bar}| [{elapsed}<{remaining}]")
