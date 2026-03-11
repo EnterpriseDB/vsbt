@@ -178,14 +178,34 @@ class TestSuite(common.TestSuite):
 
         return int(num_vectors * avg_per_node)
 
-    # On-disk index is ~65% of the in-memory graph size.
-    # Observed: 993 GB in-memory → 646 GB on disk (dim=96, m=16, 1B vectors).
-    HNSW_ONDISK_RATIO = 0.65
+    @staticmethod
+    def estimate_hnsw_index_size(num_vectors: int, dim: int, m: int) -> int:
+        """Estimate on-disk HNSW index size based on pgvector's page layout.
 
-    @classmethod
-    def estimate_hnsw_index_size(cls, graph_memory_bytes: int) -> int:
-        """Estimate on-disk HNSW index size from in-memory graph size."""
-        return int(graph_memory_bytes * cls.HNSW_ONDISK_RATIO)
+        Each node on disk stores the vector, layer-0 neighbors (2*M entries),
+        and a fraction of upper-layer neighbors. Nodes are packed into 8KB
+        PostgreSQL pages, and page fragmentation waste is accounted for.
+
+        Validated against:
+          dim=96,  m=16, 1B vectors  → predicts 632 GB (actual 646 GB, ~2% off)
+          dim=768, m=16, 5M vectors  → predicts 19.0 GB (actual 18.8 GB, ~1% off)
+        """
+        def maxalign(x):
+            return (x + 7) & ~7
+
+        USABLE_PAGE = 8192 - 40  # page header + HNSW special space
+        TUPLE_OVERHEAD = 32      # line pointer (4) + tuple header (~28)
+        NEIGHBOR_SIZE = 6        # ItemPointerData: BlockIdData(4) + OffsetNumber(2)
+
+        vector_bytes = maxalign(8 + 4 * dim)
+        neighbor_bytes_l0 = maxalign(4 + 2 * m * NEIGHBOR_SIZE)
+        upper_neighbor_avg = maxalign(4 + m * NEIGHBOR_SIZE) / (m - 1) if m > 1 else 0
+        raw_node_size = TUPLE_OVERHEAD + vector_bytes + neighbor_bytes_l0 + int(upper_neighbor_avg)
+
+        nodes_per_page = max(1, USABLE_PAGE // raw_node_size)
+        actual_bytes_per_node = USABLE_PAGE / nodes_per_page
+
+        return int(actual_bytes_per_node * num_vectors)
 
     def create_index(self, suite_name: str, table_name: str, dataset: dict):
         """Create an HNSW index using pgvector."""
@@ -206,7 +226,7 @@ class TestSuite(common.TestSuite):
             est_bytes = self.estimate_hnsw_graph_memory(num_vectors, dim, m)
             est_gb = est_bytes / (1024 ** 3)
             est_mwm = f"{int(est_gb + 1)}GB"
-            est_idx_bytes = self.estimate_hnsw_index_size(est_bytes)
+            est_idx_bytes = self.estimate_hnsw_index_size(num_vectors, dim, m)
             est_idx_gb = est_idx_bytes / (1024 ** 3)
             print(f"Estimated HNSW graph memory: {est_gb:.1f} GB "
                   f"(recommended maintenance_work_mem >= '{est_mwm}')")
