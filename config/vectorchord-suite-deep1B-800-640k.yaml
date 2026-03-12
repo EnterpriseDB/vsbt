@@ -10,17 +10,11 @@ vc-deep1B-800-640k:
   pg_parallel_workers: 32
   top: 10
   benchmarks:
-    30-200-1.5:
-      nprob: 30,200
+    30-250-1.5:
+      nprob: 30,250
       epsilon: 1.5
-    30-200-1.9:
-      nprob: 30,200
-      epsilon: 1.9
-    40-200-1.5:
-      nprob: 40,200
-      epsilon: 1.5
-    40-200-1.9:
-      nprob: 40,200
+    30-250-1.9:
+      nprob: 30,250
       epsilon: 1.9
     40-250-1.5:
       nprob: 40,250
