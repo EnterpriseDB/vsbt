@@ -1,23 +1,26 @@
 #!/bin/bash
 set -e
 
-SUITE="${1:?Usage: $0 <config.yaml> [SB_LIST]}"
+SUITE="${1:?Usage: $0 <config.yaml> [small|large|SB_LIST]}"
 WORKDIR="/data/vsbt"
 
 # Infer suite runner from config filename
 case "$(basename "$SUITE")" in
-  pgvector*)  RUNNER="pgvector_suite.py" ;;
+  pgvector*)    RUNNER="pgvector_suite.py" ;;
   vectorchord*) RUNNER="vectorchord_suite.py" ;;
-  pgpu*)      RUNNER="pgpu_suite.py" ;;
-  *)          echo "Cannot infer suite from config: $SUITE"; exit 1 ;;
+  pgpu*)        RUNNER="pgpu_suite.py" ;;
+  *)            echo "Cannot infer suite from config: $SUITE"; exit 1 ;;
 esac
 
-# Default shared_buffers list, or pass as second arg (comma-separated)
-if [ -n "$2" ]; then
-  IFS=',' read -ra SB_LIST <<< "$2"
-else
-  SB_LIST=(700GB 512GB 256GB 128GB 64GB 32GB 16GB)
-fi
+# shared_buffers presets
+SB_SMALL=(2GB 4GB 8GB 16GB 32GB)                  # 5M-20M datasets
+SB_LARGE=(700GB 512GB 256GB 128GB 64GB 32GB 16GB)  # 100M-1B datasets
+
+case "${2:-large}" in
+  small) SB_LIST=("${SB_SMALL[@]}") ;;
+  large) SB_LIST=("${SB_LARGE[@]}") ;;
+  *)     IFS=',' read -ra SB_LIST <<< "$2" ;;
+esac
 
 echo "Config:  $SUITE"
 echo "Runner:  $RUNNER"
