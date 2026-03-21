@@ -8,8 +8,8 @@ pgvector-deep1B-m16-128:
   top: 10
   benchmarks:
     "200": { efSearch: 200 }
-    "400": { efSearch: 400 }
-    "600": { efSearch: 600 }
+    "300": { efSearch: 300 }
+    "380": { efSearch: 380 }
+    "550": { efSearch: 550 }
     "800": { efSearch: 800 }
     "1000": { efSearch: 1000 }
-    "1200": { efSearch: 1200 }

@@ -21,8 +21,10 @@ ENV/
 *.npy
 *.h5
 
-# Results (generated)
+# Results and reports (internal)
 results/
+arch-8/
+docs/
 
 # Planning docs
 PLAN.md

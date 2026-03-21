@@ -152,6 +152,7 @@ class ResultsManager:
             "dataset": config.get("dataset", "N/A"),
             "metric": config.get("metric", "N/A"),
             "pg_parallel_workers": config.get("pg_parallel_workers", "N/A"),
+            "query_clients": results.get("query_clients", 1),
             "top": config.get("top", "N/A"),
             "m": config.get("m", "N/A"),
             "ef_construction": config.get("efConstruction", "N/A"),
@@ -519,52 +520,8 @@ class ResultsManager:
             "",
         ]
 
-        # --- System Information (from latest run) ---
-        system_report = results.get("system_report")
-        if system_report:
-            lines.extend([
-                "---",
-                "",
-                "## System Information",
-                "",
-                "```",
-                system_report,
-                "```",
-                "",
-            ])
-
-        # --- Configuration ---
-        lines.extend(["---", "", "## Configuration", ""])
-
-        config_rows = [
-            ["Dataset", str(config.get("dataset", "N/A"))],
-            ["Metric", str(config.get("metric", "N/A"))],
-            ["PG Parallel Workers", str(config.get("pg_parallel_workers", "N/A"))],
-            ["Query Clients", str(query_clients)],
-            ["Top-K", str(config.get("top", "N/A"))],
-        ]
-
-        if suite_type == "pgvector":
-            config_rows.extend([
-                ["M", str(config.get("m", "N/A"))],
-                ["EF Construction", str(config.get("efConstruction", "N/A"))],
-            ])
-        elif suite_type in ("vectorchord", "pgpu"):
-            config_rows.extend([
-                ["Lists", str(config.get("lists", results.get("lists", "N/A")))],
-                ["Sampling Factor", str(config.get("samplingFactor", "N/A"))],
-                ["Residual Quantization", str(config.get("residual_quantization", "N/A"))],
-            ])
-            if suite_type == "vectorchord":
-                config_rows.extend([
-                    ["Build Threads", str(results.get("build_threads", "N/A"))],
-                    ["K-means Hierarchical", str(config.get("kmeans_hierarchical", "N/A"))],
-                ])
-
-        lines.extend(format_markdown_table(["Parameter", "Value"], config_rows))
-
         # --- Build Metrics (only runs that actually built something) ---
-        lines.extend(["", "---", "", "## Build Metrics", ""])
+        lines.extend(["---", "", "## Build Metrics", ""])
 
         build_rows = []
         for run_data in all_runs:
@@ -672,15 +629,19 @@ class ResultsManager:
         if latency_chart.exists():
             lines.extend(["### Query Latency", "", f"![Query Latency](charts/{latency_chart.name})", ""])
 
-        # --- System metrics (latest run only) ---
-        if system_metrics:
-            lines.extend(["---", "", system_metrics])
-            dashboard = self._charts_dir(test_name) / "system_dashboard.png"
-            if dashboard.exists():
-                lines.extend(["", f"![System Dashboard](charts/{dashboard.name})", ""])
-
-        if pg_stats:
-            lines.extend(["---", "", pg_stats])
+        # --- System Information (from latest run) ---
+        system_report = results.get("system_report")
+        if system_report:
+            lines.extend([
+                "---",
+                "",
+                "## System Information",
+                "",
+                "```",
+                system_report,
+                "```",
+                "",
+            ])
 
         with open(filepath, "w") as f:
             f.write("\n".join(lines))

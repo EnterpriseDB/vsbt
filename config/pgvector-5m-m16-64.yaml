@@ -7,13 +7,9 @@ pgvector-laion-5m-m16-64:
   efConstruction: 64
   top: 10
   benchmarks:
-    "10": { efSearch: 10 }
     "20": { efSearch: 20 }
     "40": { efSearch: 40 }
-    "60": { efSearch: 60 }
-    "80": { efSearch: 80 }
+    "85": { efSearch: 85 }
     "120": { efSearch: 120 }
     "200": { efSearch: 200 }
     "400": { efSearch: 400 }
-    "600": { efSearch: 600 }
-    "800": { efSearch: 800 }

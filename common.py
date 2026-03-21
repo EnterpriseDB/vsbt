@@ -515,7 +515,7 @@ class TestSuite:
                         pbar.update(max(embedded_pct - pbar.n, 0))
                     elif new_total > 0:
                         if pbar is None:
-                            pbar = tqdm(smoothing=0.0, total=new_total,
+                            pbar = tqdm(smoothing=0.0, total=new_total, initial=blocks_done,
                                         desc=f"Building index ({phase})", ncols=100,
                                         bar_format="{desc}: {percentage:3.0f}%|{bar}| [{elapsed}<{remaining}]")
                         elif new_total != pbar.total:
@@ -816,6 +816,7 @@ class TestSuite:
         os.makedirs(f"./results/{name}", exist_ok=True)
         self.results[name] = {}
         self.results[name]["fs_cache"] = not self.no_fs_cache
+        self.results[name]["query_clients"] = self.query_clients
         if self._system_report_content:
             self.results[name]["system_report"] = self._system_report_content
 
@@ -905,12 +906,13 @@ class TestSuite:
             if self.system_monitor:
                 self.system_monitor.mark_phase("index_start")
             self.create_index(name, table_name, ds)
-            self.calculate_index_size(name, table_name)
             if self.system_monitor:
                 self.system_monitor.mark_phase("index_end")
             self.pg_stats_collector.capture_snapshot("after_index", table_name)
         else:
             print("Skipping index creation as requested.")
+
+        self.calculate_index_size(name, table_name)
 
         if not self.build_only:
             if self.system_monitor:
