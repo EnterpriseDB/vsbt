@@ -4,6 +4,7 @@ This guide walks through setting up and running PostgreSQL vector search benchma
 It covers installing PostgreSQL, configuring it for vector search workloads, installing the `pgvector` extension, and running benchmarks with various datasets and index configurations.
 
 To demonstrate the process, we will configure a new environment to run the toolkit, setup a PostgreSQL 17 cluster, and execute a benchmark suite using the `laion-5m-test-ip` dataset with HNSW index (m=16) and 64-bit quantization.
+In this exercise, the path `/home` is the mountpoint for a large filesystem, and will be used for the PostgreSQL data directory and `vsbt` repository to ensure sufficient disk space for datasets and indexes.
 
 ## Table of Contents
 
@@ -211,7 +212,8 @@ sudo -u postgres /usr/pgsql-17/bin/pg_ctl restart -D /home/postgres/data
 | 100M vectors | 128GB - 256GB                     | 32GB - 64GB                  |
 | 1B vectors   | 512GB - 1TB                       | 64GB+ (or 700GB+ for full index caching) |
 
-**Note:** For index builds, lower `shared_buffers` (8-16GB) and maximize `maintenance_work_mem`. After building, raise `shared_buffers` for query performance.
+**Note:** For index builds, lower `shared_buffers` (8-16GB) and maximize `maintenance_work_mem`. After building, raise `shared_buffers` for query performance. 
+See [README.md](README.md#pgvector-memory-tuning-for-large-hnsw-index-builds) for detailed memory tuning guidance.
 
 ---
 
@@ -285,7 +287,7 @@ python pgvector_suite.py -s config/pgvector-suite-5m-m16-64.yaml
 
 This downloads the dataset to `/datasets` (first run only), loads vectors, builds indexes, runs queries, and generates a report in `results/`.
 
-Follow the on-screen output for progress. After completion, check the generated report for detailed performance metrics.
+See [README.md](README.md#output) for details on output format and generated reports.
 
 **Example output:**
 
@@ -369,7 +371,7 @@ Results available in results/
 Test suite completed.
 ```
 
-More command-line options, configuration file details, and result interpretation can be found in the [README.md](README.md) file.
+See README.md for [metrics reported](README.md#metrics-reported) and [comparing benchmark runs](README.md#comparing-runs).
 
 ---
 
