@@ -33,7 +33,7 @@ For detailed usage instructions, configuration options, and result interpretatio
 - Root or sudo access
 - Internet connectivity (for package downloads and datasets)
 
-**Important:** Ensure the PostgreSQL data directory and vsbt repository are set up on a disk with sufficient space for your target dataset.
+**Important:** Ensure the PostgreSQL data directory and `vsbt` repository are set up on a disk with sufficient space for your target dataset.
 
 ---
 
@@ -130,11 +130,11 @@ sudo chmod 755 /run/postgresql
 sudo -u postgres /usr/pgsql-17/bin/initdb -D /home/postgres/data
 ```
 
-**Important:** If you use a custom data directory path, replace `/home/postgres/data` with your actual path in all subsequent commands throughout this guide (pg_ctl, pg_hba.conf location, etc.).
+**Important:** If you use a custom data directory path, replace `/home/postgres/data` with your actual path in all subsequent commands throughout this guide (`pg_ctl`, `pg_hba.conf` location, etc.).
 
 ### Configure Authentication
 
-Edit `/home/postgres/data/pg_hba.conf` and add these lines at the top (before other rules):
+Edit `pg_hba.conf` file and add these lines:
 
 ```
 # Allow local connections without password for postgres user
@@ -205,14 +205,6 @@ sudo -u postgres /usr/pgsql-17/bin/pg_ctl restart -D /home/postgres/data
 
 ### Memory Sizing Guidelines
 
-| Dataset Size | Recommended `maintenance_work_mem` | Recommended `shared_buffers` |
-|--------------|-----------------------------------|------------------------------|
-| 5M vectors   | 8GB - 16GB                        | 8GB - 16GB                   |
-| 20M vectors  | 32GB - 64GB                       | 16GB - 32GB                  |
-| 100M vectors | 128GB - 256GB                     | 32GB - 64GB                  |
-| 1B vectors   | 512GB - 1TB                       | 64GB+ (or 700GB+ for full index caching) |
-
-**Note:** For index builds, lower `shared_buffers` (8-16GB) and maximize `maintenance_work_mem`. After building, raise `shared_buffers` for query performance. 
 See [README.md](README.md#pgvector-memory-tuning-for-large-hnsw-index-builds) for detailed memory tuning guidance.
 
 ---
@@ -255,9 +247,9 @@ cd /home
 
 # Clone the vsbt repository
 git clone https://github.com/EnterpriseDB/vsbt.git
-cd vsbt
 
-# Create and activate a Python virtual environment
+# Create and activate a Python virtual environment undder the vsbt directory
+cd vsbt
 python3.12 -m venv venv
 source venv/bin/activate
 
@@ -273,6 +265,7 @@ pip install -r requirements.txt
 To demonstrate running a benchmark, we'll execute the pgvector suite with the 5M vector dataset. This will test pgvector's performance with HNSW indexes (m=16) and 64-bit quantization.
 
 This test has the configuration file `config/pgvector-suite-5m-m16-64.yaml` which specifies the dataset, index parameters, and query settings.
+See the `/config` directory for other pre-defined benchmark configurations, or create your own custom configuration file.
 
 ```sh
 # Navigate to the vsbt directory if not already there
@@ -398,21 +391,6 @@ cat /home/postgres/data/pg_hba.conf
 sudo mkdir -p /run/postgresql
 sudo chown postgres:postgres /run/postgresql
 sudo chmod 755 /run/postgresql
-```
-
-### Extension Not Found
-
-**Symptom:** `ERROR: could not open extension control file`
-
-```sh
-# Verify extension is installed
-rpm -qa | grep pgvector
-
-# Reinstall if missing
-sudo dnf install -y pgvector_17
-
-# Restart PostgreSQL
-sudo -u postgres /usr/pgsql-17/bin/pg_ctl restart -D /home/postgres/data
 ```
 
 ### Python Dependency Errors
