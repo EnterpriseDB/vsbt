@@ -38,6 +38,7 @@ class TestSuite(common.TestSuite):
         conn = psycopg.connect(url)
         pgvector.psycopg.register_vector(conn)
         conn.execute(f"SET hnsw.ef_search={ef_search}")
+        conn.execute("SET enable_seqscan = off")
 
         query_sql = f"SELECT id FROM {table_name} ORDER BY embedding {metric_ops} %s LIMIT {top}"
 
@@ -265,6 +266,7 @@ class TestSuite(common.TestSuite):
     ) -> tuple[list[tuple[int, float]], str]:
         """Run sequential benchmark queries."""
         conn.execute(f"SET hnsw.ef_search={benchmark['efSearch']}")
+        conn.execute("SET enable_seqscan = off")
 
         metric_ops = self._get_metric_operator(metric)
 
