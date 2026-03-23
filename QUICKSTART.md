@@ -401,5 +401,3 @@ If `pip install -r requirements.txt` fails or you see `ModuleNotFoundError` when
 source venv/bin/activate
 pip install -r requirements.txt
 ```
-
-For benchmark-related troubleshooting (memory tuning, slow builds, low recall), see [README.md](README.md).
