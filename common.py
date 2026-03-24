@@ -566,13 +566,11 @@ class TestSuite:
 
     def calculate_index_size(self, suite_name: str, table_name: str):
         conn = self.create_connection()
+        idx_name = self.index_name(table_name)
         with conn.cursor() as acur:
             acur.execute(
-                f'''
-                SELECT pg_size_pretty(pg_relation_size(indexrelid))
-                FROM pg_stat_all_indexes i JOIN pg_class c ON i.relid=c.oid
-                WHERE i.relname='{table_name}';
-                '''
+                "SELECT pg_size_pretty(pg_relation_size(%s::regclass))",
+                (idx_name,)
             )
             result = acur.fetchone()
             self.results[suite_name]["index_size"] = result[0]
