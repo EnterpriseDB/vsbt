@@ -5,7 +5,7 @@ SUITE="${1:?Usage: $0 <config.yaml> [5m|100m|1b|SB:RAM,...] [query-clients: 1,32
 SCALE="${2:-100m}"
 IFS=',' read -ra CLIENT_LIST <<< "${3:-1}"
 MAX_QUERIES="${4:-}"
-WORKDIR="/data/vsbt"
+WORKDIR="${VSBT_WORKDIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 TOTAL_RAM_GB=1511
 HUGEPAGE_SIZE_MB=2
 

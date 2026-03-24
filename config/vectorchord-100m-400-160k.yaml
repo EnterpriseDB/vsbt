@@ -1,4 +1,4 @@
-vc-laion-100m-400-160000-test-ip:
+vc-laion-100m-400-160k:
   dataset: laion-100m-test-ip
   datasetType: hdf5
   metric: dot

@@ -8,7 +8,7 @@ A comprehensive benchmarking tool for PostgreSQL vector search extensions. Compa
 |-----------|------------|-------------|
 | **[pgvector](https://github.com/pgvector/pgvector)** | [HNSW](https://arxiv.org/abs/1603.09320) | Standard CPU-based approximate nearest neighbor search |
 | **[vchordq](https://github.com/tensorchord/VectorChord)** | [IVF-RaBitQ](https://arxiv.org/abs/2405.12497) ([VectorChord](https://blog.vectorchord.ai/scaling-vector-search-to-1-billion-on-postgresql)) | High dimensionality & high performance vector quantization & compression |
-| **[pgpu](https://github.com/EnterpriseDB/pgpu)** | IVF-RaBitQ (VectoChord) | GPU-accelerated index building for VectorChord |
+| **[pgpu](https://github.com/EnterpriseDB/pgpu)** | IVF-RaBitQ (VectorChord) | GPU-accelerated index building for VectorChord |
 
 ## Supported Datasets
 
@@ -81,11 +81,11 @@ python <suite>.py -s config/<config>.yaml [options]
 | `--devices` | Block devices to monitor | Auto-detected |
 | `--chunk-size` | Chunk size for loading data | `1000000` |
 | `--query-clients` | Number of parallel client sessions for querying | `1` |
+| `--max-queries` | Limit number of queries per benchmark | Full test set |
 | `--max-load-threads` | Threads for loading embeddings | `4` |
 | `--skip-add-embeddings` | Skip data loading step | `false` |
 | `--skip-index-creation` | Skip index build step | `false` |
 | `--build-only` | Build index only, skip query benchmarks | `false` |
-| `--no-fs-cache` | Drop filesystem cache after prewarm (requires sudo) | `false` |
 | `--overwrite-table` | Drop existing table first | `false` |
 | `--debug` | Enable debug logging | `false` |
 | `--debug-single-query` | Repeat same query to diagnose latency issues | `false` |
@@ -94,41 +94,30 @@ python <suite>.py -s config/<config>.yaml [options]
 
 ```bash
 # Run with default 5M dataset configuration
-python pgvector_suite.py -s config/pgvector_suite.yaml \
-    --url "postgresql://postgres@localhost:5432/postgres" \
+python pgvector_suite.py -s config/pgvector-5m-m16-128.yaml
 
 # Skip loading if data already exists
-python pgvector_suite.py -s config/pgvector_suite.yaml \
-    --skip-add-embeddings \
-    --url "postgresql://postgres@localhost:5432/postgres"
+python pgvector_suite.py -s config/pgvector-5m-m16-128.yaml --skip-add-embeddings
 ```
 
 ### Running VectorChord Benchmarks
 
 ```bash
-# Run 20M dataset benchmark
-python vectorchord_suite.py -s config/vectorchord_suite_20m.yaml \
-    --url "postgresql://postgres@localhost:5432/postgres"
-
 # Run 100M dataset benchmark
-python vectorchord_suite.py -s config/vectorchord_suite_100m.yaml \
-    --url "postgresql://postgres@localhost:5432/postgres"
+python vectorchord_suite.py -s config/vectorchord-100m-570-320k.yaml
 
 # Run 1B dataset benchmark
-python vectorchord_suite.py -s config/vectorchord_suite_1B.yaml \
-    --url "postgresql://postgres@localhost:5432/postgres"
+python vectorchord_suite.py -s config/vectorchord-deep1B-800-640k.yaml
 ```
 
 ### Running PGPU (GPU-Accelerated) Benchmarks
 
 ```bash
 # Run GPU-accelerated index build with 5M dataset
-python pgpu_suite.py -s config/pgpu_suite_5m.yaml \
-    --url "postgresql://postgres@localhost:5432/postgres"
+python pgpu_suite.py -s config/pgpu_5m.yaml
 
 # Run with 100M dataset
-python pgpu_suite.py -s config/pgpu_suite_100m.yaml \
-    --url "postgresql://postgres@localhost:5432/postgres"
+python pgpu_suite.py -s config/pgpu_100m.yaml
 ```
 
 ### Using External Centroids
@@ -137,14 +126,12 @@ For VectorChord and PGPU, you can provide pre-computed centroids:
 
 ```bash
 # Using a centroids file
-python vectorchord_suite.py -s config/vectorchord_suite_100m.yaml \
-    --centroids-file centroids.npy \
-    --url "postgresql://postgres@localhost:5432/postgres"
+python vectorchord_suite.py -s config/vectorchord-100m-570-320k.yaml \
+    --centroids-file centroids.npy
 
 # Using an existing centroids table
-python vectorchord_suite.py -s config/vectorchord_suite_100m.yaml \
-    --centroids-table public.my_centroids \
-    --url "postgresql://postgres@localhost:5432/postgres"
+python vectorchord_suite.py -s config/vectorchord-100m-570-320k.yaml \
+    --centroids-table public.my_centroids
 ```
 
 ### Parallel Query Benchmarking
@@ -152,52 +139,122 @@ python vectorchord_suite.py -s config/vectorchord_suite_100m.yaml \
 Run queries in parallel to measure throughput under load:
 
 ```bash
-python pgvector_suite.py -s config/pgvector_suite.yaml \
-    --query-clients 8 \
+python pgvector_suite.py -s config/pgvector-5m-m16-128.yaml \
+    --query-clients 32 \
     --skip-add-embeddings \
     --skip-index-creation
 ```
+
+## Automated Benchmark Script
+
+`utils/run_benchmarks.sh` automates running benchmarks across simulated server sizes using huge pages to constrain available memory. This provides realistic performance data for different production server configurations without needing separate hardware.
+
+`utils/run_full_pipeline.sh` orchestrates the complete workflow: build index, benchmark across server tiers, and park the index — for each configuration. It chains `run_benchmarks.sh` internally and handles PostgreSQL restarts between build and query phases.
+
+### Usage
+
+```bash
+# Run benchmarks across server tiers for a single config
+utils/run_benchmarks.sh <config.yaml> [5m|100m|1b|SB:RAM,...] [query-clients] [max-queries]
+
+# Run the full build → benchmark → park pipeline for all configs
+utils/run_full_pipeline.sh vectorchord   # All VectorChord configs
+utils/run_full_pipeline.sh pgvector      # All pgvector configs
+utils/run_full_pipeline.sh all           # Everything
+```
+
+### Server Tier Presets
+
+Each preset defines a series of simulated servers with appropriate shared_buffers and filesystem cache:
+
+**5M** (19-21 GB indexes): 8 GB through 256 GB servers
+```bash
+utils/run_benchmarks.sh config/pgvector-5m-m16-128.yaml 5m
+```
+
+**100M** (367-405 GB indexes): 64 GB through full machine
+```bash
+utils/run_benchmarks.sh config/vectorchord-100m-570-320k.yaml 100m
+```
+
+**1B** (469-646 GB indexes): 128 GB through full machine (750 GB shared_buffers)
+```bash
+utils/run_benchmarks.sh config/pgvector-1B-m16-128.yaml 1b
+```
+
+### Multiple Client Counts
+
+Run both single-client and parallel benchmarks in one pass:
+
+```bash
+# Run with 1 and 32 clients at each server tier
+utils/run_benchmarks.sh config/pgvector-1B-m16-128.yaml 1b 1,32 1000
+```
+
+### Custom Server Tiers
+
+Specify custom `SB:RAM` pairs (shared_buffers GB : total RAM GB):
+
+```bash
+utils/run_benchmarks.sh config/pgvector-100m-m16-128.yaml 32:128,64:256,128:512
+```
+
+### How It Works
+
+For each server tier, the script:
+1. Releases any previous huge page allocations
+2. Configures `shared_buffers` via `ALTER SYSTEM`
+3. Stops PostgreSQL
+4. Allocates huge pages to lock away excess memory (simulating a smaller server)
+5. Starts PostgreSQL with the constrained memory
+6. Runs benchmarks for each client count
+7. Moves to the next tier
+
+The last tier in each preset uses the full machine without memory constraints.
 
 ## Configuration Files
 
 ### pgvector Configuration Example
 
 ```yaml
-pgvector-laion-5m-m16-256:
+pgvector-laion-5m-m16-128:
   dataset: laion-5m-test-ip
   datasetType: hdf5
-  pg_parallel_workers: 63  # PostgreSQL parallel workers for index build
+  pg_parallel_workers: 32
   metric: dot
-  m: 16                    # HNSW M parameter
-  efConstruction: 256      # HNSW ef_construction
-  top: 10                  # Top-K results
+  m: 16
+  efConstruction: 128
+  top: 10
   benchmarks:
+    "20": { efSearch: 20 }
     "40": { efSearch: 40 }
+    "58": { efSearch: 58 }
     "80": { efSearch: 80 }
+    "120": { efSearch: 120 }
     "200": { efSearch: 200 }
 ```
 
 ### VectorChord Configuration Example
 
 ```yaml
-vc-laion-5m-8192-test-ip:
+vc-laion-5m-190-35k:
   dataset: laion-5m-test-ip
   datasetType: hdf5
-  metric: ip
-  lists: [90, 8192]        # Hierarchical IVF lists
-  samplingFactor: 64
-  pg_parallel_workers: 63  # PostgreSQL parallel workers for index build
-  kmeans_hierarchical: true
-  kmeans_dimension: 100
+  metric: dot
+  samplingFactor: 256
+  lists: [190, 35000]
+  build_threads: 32
   residual_quantization: true
+  kmeans_hierarchical: true
+  pg_parallel_workers: 32
   top: 10
   benchmarks:
-    20-1.0:
-      nprob: 2,20          # Probes per level
-      epsilon: 1.0
-    50-1.5:
-      nprob: 16,50
-      epsilon: 1.5
+    15-30-1.9:
+      nprob: 15,30
+      epsilon: 1.9
+    38-76-1.9:
+      nprob: 38,76
+      epsilon: 1.9
 ```
 
 ### PGPU Configuration Example
@@ -207,10 +264,10 @@ pgpu-laion-100m-160000-test-ip:
   dataset: laion-100m-test-ip
   datasetType: hdf5
   metric: dot
-  lists: [500, 160000]     # Hierarchical IVF lists
+  lists: [500, 160000]
   samplingFactor: 256
   batchSize: 10000000
-  pg_parallel_workers: 63  # PostgreSQL parallel workers for index build
+  pg_parallel_workers: 32
   residual_quantization: true
   top: 10
   benchmarks:
@@ -227,9 +284,11 @@ Results are organized per test name, with each test accumulating results across 
 results/
 ├── all_results.csv                        # Global CSV (append-only, all runs)
 ├── {test_name}/                           # One folder per YAML test name
-│   ├── report.md                          # Incremental report (all runs for this test)
+│   ├── report.md                          # Aggregated report (build metrics + all benchmark results)
 │   ├── runs/                              # Raw data per run
-│   │   └── {run_id}.json
+│   │   └── {test_name}_{run_id}/
+│   │       ├── run.json
+│   │       └── report.md
 │   ├── charts/                            # Charts (latest run)
 │   │   ├── recall_vs_qps.png
 │   │   ├── latency.png
@@ -241,7 +300,7 @@ results/
     └── recall_vs_p99_{timestamp}.png
 ```
 
-The `report.md` is **incremental** — it is regenerated from all stored run JSONs each time a benchmark completes. Running the same test with different `shared_buffers` or `--no-fs-cache` adds a new run section to the existing report, building a complete history.
+The `report.md` is **incremental** — it is regenerated from all stored run JSONs each time a benchmark completes. Running the same test with different `shared_buffers` or client counts adds new rows to the existing report.
 
 ### Generated Reports
 
@@ -249,12 +308,12 @@ Each benchmark run generates:
 
 | Output | Description |
 |--------|-------------|
-| **Incremental Report** | `report.md` with system info, configuration, build metrics across all runs, and benchmark tables per run |
+| **Aggregated Report** | `report.md` with build metrics and benchmark results across all runs |
 | **Recall vs QPS Chart** | Scatter plot showing recall/throughput tradeoff |
 | **Latency Chart** | Bar chart comparing P50/P99 latencies across configs |
 | **Build Time Chart** | Horizontal bar showing load/clustering/index build breakdown |
 | **Raw JSON** | Complete results data per run for programmatic access |
-| **Consolidated CSV** | Append-only CSV with shared_buffers, maintenance_work_mem, and fs_cache columns |
+| **Consolidated CSV** | Append-only CSV with all benchmark parameters and results |
 
 ### Comparing Runs
 
@@ -268,26 +327,17 @@ python chart_compare.py --list
 python chart_compare.py --runs 20260309010000 20260309020000
 
 # Compare latest runs for specific tests (e.g., pgvector vs vectorchord)
-python chart_compare.py --tests pgvector-laion-1B-m16-128 vc-deep1B-test-l2
+python chart_compare.py --tests pgvector-laion-5m-m16-128 vc-laion-5m-190-35k
 
 # Filter by shared_buffers size
-python chart_compare.py --tests pgvector-... vc-... --sb 700GB
-
-# Filter by cache mode
-python chart_compare.py --tests pgvector-... vc-... --cache-mode with
+python chart_compare.py --tests pgvector-... vc-... --sb 32GB
 ```
 
-Generates Recall vs QPS and Recall vs P99 charts with labeled data points (efSearch or nprob/epsilon) and distinct colors/markers per series.
-
-### Build-Only and No-FS-Cache Modes
+### Build-Only Mode
 
 ```bash
 # Build the index without running query benchmarks
-python pgvector_suite.py -s config/pgvector_suite_1B.yaml --build-only --skip-add-embeddings
-
-# Run benchmarks with filesystem cache dropped after prewarm
-# (isolates shared_buffers performance from OS page cache)
-python pgvector_suite.py -s config/pgvector_suite_1B.yaml --no-fs-cache --skip-add-embeddings --skip-index-creation
+python pgvector_suite.py -s config/pgvector-1B-m16-128.yaml --build-only --skip-add-embeddings
 ```
 
 ### Metrics Reported
@@ -355,23 +405,24 @@ vector-search/
 ├── pgpu_suite.py             # GPU-accelerated benchmarks
 ├── requirements.txt          # Python dependencies
 ├── config/                   # Benchmark configurations
-│   ├── pgvector_suite.yaml
-│   ├── pgpu_suite_5m.yaml
-│   ├── pgpu_suite_100m.yaml
-│   ├── vectorchord_suite_100m.yaml
-│   ├── vectorchord_suite_1B.yaml
+│   ├── pgvector-5m-m16-128.yaml
+│   ├── pgvector-100m-m16-128.yaml
+│   ├── vectorchord-5m-190-35k.yaml
+│   ├── vectorchord-deep1B-800-640k.yaml
 │   └── ...
 ├── monitor/
 │   ├── __init__.py           # Monitor package
 │   ├── system_monitor.py     # System metrics (psutil-based)
 │   └── pg_stats.py           # PostgreSQL statistics collector
 ├── utils/
+│   ├── run_benchmarks.sh     # Automated benchmark runner with server simulation
+│   ├── run_full_pipeline.sh  # Full build → benchmark → park pipeline
 │   ├── convert_deep1b.py     # Deep1B format converter
 │   └── verify_deep1B.py      # File integrity checker
 └── results/                  # Output directory (generated)
     ├── all_results.csv       # Global CSV (all runs)
     ├── {test_name}/          # Per-test results
-    │   ├── report.md         # Incremental report
+    │   ├── report.md         # Aggregated report
     │   ├── runs/*.json       # Raw data per run
     │   └── charts/*.png      # Charts
     └── comparisons/          # Cross-test comparison charts
@@ -491,16 +542,13 @@ The entire table stays cached, `kswapd` goes quiet, parallel workers stop waitin
 
 ### Prewarming for Query Benchmarks
 
-For consistent benchmark results, both the **index** and the **heap table** should be warmed before running queries:
+For consistent benchmark results, the **index** should be warmed before running queries:
 
 - **Index → shared_buffers:** `pg_prewarm('index_name')` loads index pages into shared_buffers (default `'buffer'` mode). For VectorChord, use `vchordrq_prewarm()` instead.
-- **Heap → OS page cache:** `pg_prewarm('table_name', 'read')` loads heap pages into the OS page cache without consuming shared_buffers.
 
-HNSW queries need the heap for distance reranking — every candidate node requires a vector lookup from the heap. If the heap is cold (not in page cache), queries hit disk on these lookups, significantly reducing QPS.
+HNSW queries need the heap for distance reranking — every candidate node requires a vector lookup from the heap. If the heap is cold (not in page cache), queries hit disk on these lookups, reducing QPS. The heap warms organically during the first queries.
 
-The benchmark suite handles this automatically: it prewarms the index into shared_buffers, then prewarms the heap into page cache. When `--no-fs-cache` is used, the page cache is dropped after both prewarm steps, so only the index in shared_buffers remains warm — this isolates the pure shared_buffers performance from page cache effects.
-
-**Memory requirement:** For full prewarming, you need enough RAM for shared_buffers (index) + page cache (heap). If the combined size exceeds available RAM, the heap prewarm will partially evict itself — in that case, the heap warms organically during the first few hundred queries.
+The benchmark suite handles index prewarming automatically. When using the `utils/run_benchmarks.sh` script with simulated server sizes (via huge pages), the filesystem cache is naturally constrained to realistic levels — no manual cache management needed.
 
 ### Recommendations
 

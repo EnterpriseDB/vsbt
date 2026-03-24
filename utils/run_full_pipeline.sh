@@ -8,7 +8,7 @@ set -e
 #   ./run_full_pipeline.sh pgvector      # Run all pgvector builds + benchmarks
 #   ./run_full_pipeline.sh all           # Run everything
 
-WORKDIR="/data/vsbt"
+WORKDIR="${VSBT_WORKDIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 TOTAL_RAM_GB=1511
 
 # ── Pipeline definitions ──────────────────────────────────────────────
@@ -115,7 +115,7 @@ run_step() {
     mq_arg="$max_queries"
   fi
 
-  cd "$WORKDIR" && ./run_benchmarks.sh "$config" "$scale" "$CLIENTS" $mq_arg
+  cd "$WORKDIR" && utils/run_benchmarks.sh "$config" "$scale" "$CLIENTS" $mq_arg
 
   # ── PARK ──
   echo ""
