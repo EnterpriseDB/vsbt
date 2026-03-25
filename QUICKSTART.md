@@ -264,7 +264,7 @@ pip install -r requirements.txt
 
 To demonstrate running a benchmark, we'll execute the pgvector suite with the 5M vector dataset. This will test pgvector's performance with HNSW indexes (m=16) and 64-bit quantization.
 
-This test has the configuration file `config/pgvector-suite-5m-m16-64.yaml` which specifies the dataset, index parameters, and query settings.
+This test has the configuration file `config/pgvector-5m-m16-64.yaml` which specifies the dataset, index parameters, and query settings.
 See the `/config` directory for other pre-defined benchmark configurations, or create your own custom configuration file.
 
 ```sh
@@ -275,7 +275,7 @@ cd vsbt
 source venv/bin/activate
 
 # Run pgvector benchmark with 5M vectors
-python pgvector_suite.py -s config/pgvector-suite-5m-m16-64.yaml 
+python pgvector_suite.py -s config/pgvector-5m-m16-64.yaml 
 ```
 
 This downloads the dataset to `/datasets` (first run only), loads vectors, builds indexes, runs queries, and generates a report in `results/`.
@@ -287,80 +287,56 @@ See [README.md](README.md#output) for details on output format and generated rep
 ```sh
 python pgvector_suite.py -s config/pgvector-5m-m16-64.yaml
 Running test: pgvector-laion-5m-m16-64
-Downloading https://enterprisedb-vector-datasets.s3.amazonaws.com/laion-5m-test-ip.hdf5 to ./datasets/laion-5m-test-ip.hdf5
-laion-5m-test-ip.hdf5: 100%|███████████████████████████| 14.7G/14.7G [90.6MiB/s]
 Table laion_5m_test_ip already exists, using it
 Dropping index laion_5m_test_ip_embedding_idx... done!
 Estimated HNSW graph memory: 17.5 GB (recommended maintenance_work_mem >= '18GB')
 Estimated on-disk index size: 19.0 GB (recommended shared_buffers >= '19GB' for query serving)
 Building index (initializing)...
-Building index (building index: loading tuples): 100%|███████████████████████████████| [10:54<00:00]
-Index build time: 655s
+Building index (building index: loading tuples): 100%|███████████████████████████████████| [10:53<?]
+Index build time: 654s
 Index built successfully.
-Index size: 19 GB
-Index size: 18.8 GB, shared_buffers: 32.0 GB (index coverage: 100.0%)
-Prewarming the index into shared_buffers... done! (0.9s)
-Prewarming the heap into page cache... done! (0.0s)
-Running benchmark: {'efSearch': 10}
-Running sequential benchmark with 10000 queries
-recall: 0.7672 QPS: 770.54 P50: 1.22ms:  10000/10000: 100%|████████████████████|
-Top: 10 | Recall: 0.7672 | QPS: 770.54 | P50: 1.22ms | P99: 2.45ms
+Table: 37.7 GB | Index: 18.8 GB | shared_buffers: 32.0 GB (index coverage: 100.0%)
+Prewarming the index into shared_buffers... done! (1.0s)
 Running benchmark: {'efSearch': 20}
 Running sequential benchmark with 10000 queries
-recall: 0.8582 QPS: 595.55 P50: 1.62ms:  10000/10000: 100%|████████████████████|
-Top: 10 | Recall: 0.8582 | QPS: 595.55 | P50: 1.62ms | P99: 3.07ms
+recall: 0.8628 QPS: 596.06 P50: 1.62ms:  10000/10000: 100%|████████████████████|
+Top: 10 | Recall: 0.8628 | QPS: 596.06 | P50: 1.62ms | P99: 3.12ms
 Running benchmark: {'efSearch': 40}
 Running sequential benchmark with 10000 queries
-recall: 0.9181 QPS: 425.94 P50: 2.33ms:  10000/10000: 100%|████████████████████|
-Top: 10 | Recall: 0.9181 | QPS: 425.94 | P50: 2.33ms | P99: 4.12ms
-Running benchmark: {'efSearch': 60}
+recall: 0.9206 QPS: 430.33 P50: 2.31ms:  10000/10000: 100%|████████████████████|
+Top: 10 | Recall: 0.9206 | QPS: 430.33 | P50: 2.31ms | P99: 4.08ms
+Running benchmark: {'efSearch': 85}
 Running sequential benchmark with 10000 queries
-recall: 0.9409 QPS: 347.10 P50: 2.87ms:  10000/10000: 100%|████████████████████|
-Top: 10 | Recall: 0.9409 | QPS: 347.10 | P50: 2.87ms | P99: 4.87ms
-Running benchmark: {'efSearch': 80}
-Running sequential benchmark with 10000 queries
-recall: 0.9515 QPS: 297.67 P50: 3.36ms:  10000/10000: 100%|████████████████████|
-Top: 10 | Recall: 0.9515 | QPS: 297.67 | P50: 3.36ms | P99: 5.54ms
+recall: 0.9535 QPS: 285.95 P50: 3.50ms:  10000/10000: 100%|████████████████████|
+Top: 10 | Recall: 0.9535 | QPS: 285.95 | P50: 3.50ms | P99: 5.88ms
 Running benchmark: {'efSearch': 120}
 Running sequential benchmark with 10000 queries
-recall: 0.9627 QPS: 230.53 P50: 4.35ms:  10000/10000: 100%|████████████████████|
-Top: 10 | Recall: 0.9627 | QPS: 230.53 | P50: 4.35ms | P99: 7.05ms
+recall: 0.9627 QPS: 226.58 P50: 4.44ms:  10000/10000: 100%|████████████████████|
+Top: 10 | Recall: 0.9627 | QPS: 226.58 | P50: 4.44ms | P99: 7.23ms
 Running benchmark: {'efSearch': 200}
 Running sequential benchmark with 10000 queries
-recall: 0.9710 QPS: 167.87 P50: 5.94ms:  10000/10000: 100%|████████████████████|
-Top: 10 | Recall: 0.9710 | QPS: 167.87 | P50: 5.94ms | P99: 9.57ms
+recall: 0.9712 QPS: 166.62 P50: 5.99ms:  10000/10000: 100%|████████████████████|
+Top: 10 | Recall: 0.9712 | QPS: 166.62 | P50: 5.99ms | P99: 9.71ms
 Running benchmark: {'efSearch': 400}
 Running sequential benchmark with 10000 queries
-recall: 0.9785 QPS: 101.88 P50: 9.74ms:  10000/10000: 100%|████████████████████|
-Top: 10 | Recall: 0.9785 | QPS: 101.88 | P50: 9.74ms | P99: 16.05ms
-Running benchmark: {'efSearch': 600}
-Running sequential benchmark with 10000 queries
-recall: 0.9807 QPS: 72.46 P50: 13.69ms:  10000/10000: 100%|████████████████████|
-Top: 10 | Recall: 0.9807 | QPS: 72.46 | P50: 13.69ms | P99: 22.53ms
-Running benchmark: {'efSearch': 800}
-Running sequential benchmark with 10000 queries
-recall: 0.9821 QPS: 57.87 P50: 17.11ms:  10000/10000: 100%|████████████████████|
-Top: 10 | Recall: 0.9821 | QPS: 57.87 | P50: 17.11ms | P99: 28.35ms
+recall: 0.9789 QPS: 100.56 P50: 9.89ms:  10000/10000: 100%|████████████████████|
+Top: 10 | Recall: 0.9789 | QPS: 100.56 | P50: 9.89ms | P99: 16.20ms
 
 =====================================================
   Results Summary: pgvector-laion-5m-m16-64
-  shared_buffers: 32GB | maintenance_work_mem: 32GB | index_size: 19 GB
+  shared_buffers: 32GB | clients: 1 | index_size: 19 GB
 =====================================================
 | EF Search | Recall | QPS    | P50 (ms) | P99 (ms) |
 |-----------|--------|--------|----------|----------|
-| 10        | 0.7672 | 770.54 |     1.22 |     2.45 |
-| 20        | 0.8582 | 595.55 |     1.62 |     3.07 |
-| 40        | 0.9181 | 425.94 |     2.33 |     4.12 |
-| 60        | 0.9409 | 347.10 |     2.87 |     4.87 |
-| 80        | 0.9515 | 297.67 |     3.36 |     5.54 |
-| 120       | 0.9627 | 230.53 |     4.35 |     7.05 |
-| 200       | 0.9710 | 167.87 |     5.94 |     9.57 |
-| 400       | 0.9785 | 101.88 |     9.74 |    16.05 |
-| 600       | 0.9807 |  72.46 |    13.69 |    22.53 |
-| 800       | 0.9821 |  57.87 |    17.11 |    28.35 |
+| 20        | 0.8628 | 596.06 |     1.62 |     3.12 |
+| 40        | 0.9206 | 430.33 |     2.31 |     4.08 |
+| 85        | 0.9535 | 285.95 |     3.50 |     5.88 |
+| 120       | 0.9627 | 226.58 |     4.44 |     7.23 |
+| 200       | 0.9712 | 166.62 |     5.99 |     9.71 |
+| 400       | 0.9789 | 100.56 |     9.89 |    16.20 |
 
 
-Results available in results/
+ Results available in results/
 Test suite completed.
 ```
 
