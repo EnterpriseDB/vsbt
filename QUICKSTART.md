@@ -233,6 +233,8 @@ CREATE EXTENSION IF NOT EXISTS pg_prewarm;
 \dx
 ```
 
+To run an extension other the pgvector, see [*Required PostgreSQL Extensions*](README.md#Required PostgreSQL Extensions).
+
 ---
 
 ## 7. vsbt Installation
@@ -266,6 +268,8 @@ To demonstrate running a benchmark, we'll execute the pgvector suite with the 5M
 
 This test has the configuration file `config/pgvector-5m-m16-64.yaml` which specifies the dataset, index parameters, and query settings.
 See the `/config` directory for other pre-defined benchmark configurations, or create your own custom configuration file.
+
+For more information on the 
 
 ```sh
 # Navigate to the vsbt directory if not already there
@@ -340,7 +344,7 @@ Top: 10 | Recall: 0.9789 | QPS: 100.56 | P50: 9.89ms | P99: 16.20ms
 Test suite completed.
 ```
 
-See README.md for [metrics reported](README.md#metrics-reported) and [comparing benchmark runs](README.md#comparing-runs).
+ [metrics reported](README.md#metrics-reported) and [comparing benchmark runs](README.md#comparing-runs).
 
 ---
 
