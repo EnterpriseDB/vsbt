@@ -1,0 +1,8 @@
+venv/
+__pycache__/
+*.pyc
+results/
+.git/
+.gitignore
+docs/
+PLAN.md
