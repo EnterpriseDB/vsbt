@@ -3,6 +3,7 @@ ivfflat-bq-rerank-openai-500k-test:
   datasetType: hdf5
   metric: cos
   lists: 707
+  maintenance_work_mem: 256MB
   pg_parallel_workers: 2
   top: 10
   benchmarks:
