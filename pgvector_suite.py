@@ -394,9 +394,13 @@ class IVFFlatBQRerankTestSuite(TestSuite):
 
         self.results[suite_name]["lists"] = lists
 
+        maintenance_work_mem = config.get("maintenance_work_mem")
+
         conn = self.create_connection()
         start_time = time.perf_counter()
 
+        if maintenance_work_mem:
+            conn.execute(f"SET maintenance_work_mem TO '{maintenance_work_mem}'")
         conn.execute(f"SET max_parallel_maintenance_workers TO {pg_parallel_workers}")
         conn.execute(f"SET max_parallel_workers TO {pg_parallel_workers}")
         conn.execute(
