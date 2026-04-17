@@ -5,7 +5,9 @@ vc-laion-20m-35000-test-ip:
   samplingFactor: 256 # Note: these are the settings to be reduced for faster execution on CPU
   kmeans_dimension: 768 # Note: these are the settings to be reduced for faster execution on CPU
   lists: [190, 35000]
+  build_threads: 32
   residual_quantization: true
+  rerank_in_table: true
   kmeans_hierarchical: true
   pg_parallel_workers: 32
   top: 10

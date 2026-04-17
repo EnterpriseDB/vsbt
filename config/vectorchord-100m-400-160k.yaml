@@ -6,6 +6,7 @@ vc-laion-100m-400-160k:
   lists: [400, 160000]
   build_threads: 32
   residual_quantization: true
+  rerank_in_table: true
   kmeans_hierarchical: true
   pg_parallel_workers: 32
   top: 10

@@ -6,6 +6,7 @@ vc-deep1B-test-l2:
   lists: [400, 160000]
   kmeans_hierarchical: true
   residual_quantization: true
+  rerank_in_table: true
   build_threads: 32
   pg_parallel_workers: 32
   top: 10
