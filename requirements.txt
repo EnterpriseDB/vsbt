@@ -9,4 +9,5 @@ tqdm==4.67.1
 pgvector==0.4.1
 mdutils==1.8.0
 PyYAML==6.0.2
+pyarrow>=15.0.0
 requests==2.33.0
