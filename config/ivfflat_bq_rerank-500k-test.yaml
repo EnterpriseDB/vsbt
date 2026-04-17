@@ -1,4 +1,5 @@
 ivfflat-bq-rerank-openai-500k-test:
+  indexType: ivfflat_bq_rerank
   dataset: openai-500k-bqtest
   datasetType: hdf5
   metric: cos

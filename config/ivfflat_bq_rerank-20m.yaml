@@ -1,0 +1,29 @@
+ivfflat-bq-rerank-laion-20m:
+  indexType: ivfflat_bq_rerank
+  dataset: laion-20m-test-ip
+  datasetType: hdf5
+  metric: dot
+  lists: 8944 # 2 * sqrt(20M)
+  maintenance_work_mem: 20GB
+  pg_parallel_workers: 8
+  top: 10
+  benchmarks:
+    probes80-rerank20:
+      probes: 80
+      rerank_limit_amplify_factor: 20
+    probes120-rerank20:
+      probes: 120
+      rerank_limit_amplify_factor: 20
+
+    probes80-rerank30:
+      probes: 80
+      rerank_limit_amplify_factor: 30
+    probes120-rerank30:
+      probes: 120
+      rerank_limit_amplify_factor: 30
+    probes180-rerank30:
+      probes: 180
+      rerank_limit_amplify_factor: 30
+    probes250-rerank30:
+      probes: 250
+      rerank_limit_amplify_factor: 30
