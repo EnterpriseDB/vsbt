@@ -210,7 +210,7 @@ class TestSuite(common.TestSuite):
         # Build IVF configuration
         ivf_config = self._build_ivf_config(
             metric, lists, build_threads, kmeans_dimension,
-            sampling_factor, kmeans_algo, rq_string
+            sampling_factor, kmeans_algo, rq_string, rerank_in_table
         )
 
         self.debug_log(f"Centroids source: {'external file' if self.centroids else 'external table' if self.centroids_table else 'internal'}")
@@ -246,12 +246,15 @@ class TestSuite(common.TestSuite):
         sampling_factor: int,
         kmeans_algo: str,
         rq_string: str,
+        rerank_in_table=None,
     ) -> str:
         """Build the IVF configuration string for index creation."""
         base_config = f"""
         residual_quantization = {rq_string}
         build.pin = 2
         """
+        if rerank_in_table is not None:
+            base_config += f"        rerank_in_table = {str(rerank_in_table).lower()}\n"
 
         if self.centroids:
             external_cfg = """
