@@ -1,0 +1,15 @@
+pgvector-glove-1m-m32-200:
+  dataset: glove-100-angular
+  datasetType: hdf5
+  pg_parallel_workers: 32
+  metric: cos
+  m: 32
+  efConstruction: 200
+  top: 10
+  benchmarks:
+    "80":  { efSearch: 80 }
+    "180": { efSearch: 180 }
+    "260": { efSearch: 260 }
+    "380": { efSearch: 380 }
+    "550": { efSearch: 550 }
+    "700": { efSearch: 700 }
