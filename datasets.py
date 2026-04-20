@@ -14,17 +14,44 @@ DATASETS = {
     "laion-5m-test-ip": {
         "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion-5m-test-ip.hdf5",
         "metric": "ip",
-        "type": "hdf5"
+        "type": "hdf5",
+        "dim": 768,
+        "num": 5_000_000
     },
     "laion-20m-test-ip": {
         "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion-20m-test-ip.hdf5",
         "metric": "ip",
-        "type": "hdf5"
+        "type": "hdf5",
+        "dim": 768,
+        "num": 20_000_000
     },
     "laion-100m-test-ip": {
         "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion-100m-test-ip.hdf5",
         "metric": "ip",
-        "type": "hdf5"
+        "type": "hdf5",
+        "dim": 768,
+        "num": 100_000_000
+    },
+    "sift-128-euclidean": {
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/sift-128-euclidean.hdf5",
+        "metric": "l2",
+        "type": "hdf5",
+        "dim": 128,
+        "num": 1_000_000
+    },
+    "glove-100-angular": {
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/glove-100-angular.hdf5",
+        "metric": "cos",
+        "type": "hdf5",
+        "dim": 100,
+        "num": 1_183_514
+    },
+    "gist-960-euclidean": {
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/gist-960-euclidean.hdf5",
+        "metric": "l2",
+        "type": "hdf5",
+        "dim": 960,
+        "num": 1_000_000
     },
 
     # --- Custom NPY Datasets ---
@@ -274,3 +301,67 @@ def get_dataset(dataset_name):
         return _load_deep1b_mmap(dataset_name, info)
     else:
         raise ValueError(f"Unknown dataset type: {dtype}")
+
+
+# --- PUBLIC METADATA API ---
+
+# Map internal loader types to public format names (matches `datasetType` in suite YAMLs).
+_FORMAT = {
+    "hdf5": "hdf5",
+    "laion-multipart": "npy",
+    "deep1b-mmap": "npy",
+}
+
+
+def list_datasets():
+    """Return the public metadata view — name, metric, format, dim, num.
+
+    Projects the internal DATASETS dict to a stable contract for external
+    consumers (e.g. kube-pgperf UI). Loader-internal fields (url, base_dir,
+    parts, gt_url, files) are intentionally excluded. The `format` field is
+    the on-disk format (hdf5/npy) — matches `datasetType` in suite YAMLs —
+    not the internal loader name.
+    """
+    out = []
+    for name, info in DATASETS.items():
+        entry = {"name": name, "metric": info["metric"]}
+        loader_type = info.get("type", "hdf5")
+        entry["format"] = _FORMAT.get(loader_type, loader_type)
+        if "dim" in info:
+            entry["dim"] = info["dim"]
+        if "num" in info:
+            entry["num"] = info["num"]
+        out.append(entry)
+    return out
+
+
+def _cli():
+    import argparse
+    import json
+    import sys
+
+    p = argparse.ArgumentParser(description="vsbt dataset metadata")
+    p.add_argument("--list", action="store_true", help="list available datasets")
+    p.add_argument("--json", action="store_true", help="emit JSON (default: table)")
+    args = p.parse_args()
+
+    if not args.list:
+        p.print_help()
+        sys.exit(0)
+
+    entries = list_datasets()
+    if args.json:
+        json.dump(entries, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        return
+
+    header = f"{'name':28} {'metric':6} {'format':6} {'dim':>5} {'num':>14}"
+    print(header)
+    print("-" * len(header))
+    for e in entries:
+        print(f"{e['name']:28} {e.get('metric', '-'):6} {e.get('format', '-'):6} "
+              f"{e.get('dim', '-'):>5} {e.get('num', '-'):>14,}")
+
+
+if __name__ == "__main__":
+    _cli()

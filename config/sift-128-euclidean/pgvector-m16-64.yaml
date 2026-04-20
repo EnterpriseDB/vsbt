@@ -1,0 +1,15 @@
+pgvector-sift-1m-m16-64:
+  dataset: sift-128-euclidean
+  datasetType: hdf5
+  pg_parallel_workers: 32
+  metric: l2
+  m: 16
+  efConstruction: 64
+  top: 10
+  benchmarks:
+    "30":  { efSearch: 30 }
+    "48":  { efSearch: 48 }
+    "50":  { efSearch: 50 }
+    "80":  { efSearch: 80 }
+    "150": { efSearch: 150 }
+    "300": { efSearch: 300 }

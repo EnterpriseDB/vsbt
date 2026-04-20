@@ -21,7 +21,8 @@ A comprehensive benchmarking tool for PostgreSQL vector search extensions. Compa
 | laion-400m-test-ip | 400M | 512 | Inner Product | NPY (multipart) |
 | deep1b-test-l2 | 1B | 96 | L2 | NPY (mmap) |
 | sift-128-euclidean | 1M | 128 | L2 | HDF5 |
-| glove-test-cos | 1.2M | 100 | Cosine | HDF5 |
+| glove-100-angular | 1.2M | 100 | Cosine | HDF5 |
+| gist-960-euclidean | 1M | 960 | L2 | HDF5 |
 
 Datasets are automatically downloaded on first use.
 
@@ -69,8 +70,10 @@ CREATE EXTENSION IF NOT EXISTS pgpu;
 ### Basic Command Structure
 
 ```bash
-python <suite>.py -s config/<config>.yaml [options]
+python <suite>.py -s config/<dataset>/<config>.yaml [options]
 ```
+
+Configs are grouped by dataset (one directory per dataset, e.g. `config/sift-128-euclidean/`, `config/laion-5m-test-ip/`). Each directory contains extension-specific YAMLs (`pgvector-*.yaml`, `vectorchord-*.yaml`, `pgpu.yaml`).
 
 ### Common Options
 
@@ -94,30 +97,30 @@ python <suite>.py -s config/<config>.yaml [options]
 
 ```bash
 # Run with default 5M dataset configuration
-python pgvector_suite.py -s config/pgvector-5m-m16-128.yaml
+python pgvector_suite.py -s config/laion-5m-test-ip/pgvector-m16-128.yaml
 
 # Skip loading if data already exists
-python pgvector_suite.py -s config/pgvector-5m-m16-128.yaml --skip-add-embeddings
+python pgvector_suite.py -s config/laion-5m-test-ip/pgvector-m16-128.yaml --skip-add-embeddings
 ```
 
 ### Running VectorChord Benchmarks
 
 ```bash
 # Run 100M dataset benchmark
-python vectorchord_suite.py -s config/vectorchord-100m-570-320k.yaml
+python vectorchord_suite.py -s config/laion-100m-test-ip/vectorchord-570-320k.yaml
 
 # Run 1B dataset benchmark
-python vectorchord_suite.py -s config/vectorchord-deep1B-800-640k.yaml
+python vectorchord_suite.py -s config/deep1b-test-l2/vectorchord-800-640k.yaml
 ```
 
 ### Running PGPU (GPU-Accelerated) Benchmarks
 
 ```bash
 # Run GPU-accelerated index build with 5M dataset
-python pgpu_suite.py -s config/pgpu_5m.yaml
+python pgpu_suite.py -s config/laion-5m-test-ip/pgpu.yaml
 
 # Run with 100M dataset
-python pgpu_suite.py -s config/pgpu_100m.yaml
+python pgpu_suite.py -s config/laion-100m-test-ip/pgpu.yaml
 ```
 
 ### Using External Centroids
@@ -126,11 +129,11 @@ For VectorChord and PGPU, you can provide pre-computed centroids:
 
 ```bash
 # Using a centroids file
-python vectorchord_suite.py -s config/vectorchord-100m-570-320k.yaml \
+python vectorchord_suite.py -s config/laion-100m-test-ip/vectorchord-570-320k.yaml \
     --centroids-file centroids.npy
 
 # Using an existing centroids table
-python vectorchord_suite.py -s config/vectorchord-100m-570-320k.yaml \
+python vectorchord_suite.py -s config/laion-100m-test-ip/vectorchord-570-320k.yaml \
     --centroids-table public.my_centroids
 ```
 
@@ -139,7 +142,7 @@ python vectorchord_suite.py -s config/vectorchord-100m-570-320k.yaml \
 Run queries in parallel to measure throughput under load:
 
 ```bash
-python pgvector_suite.py -s config/pgvector-5m-m16-128.yaml \
+python pgvector_suite.py -s config/laion-5m-test-ip/pgvector-m16-128.yaml \
     --query-clients 32 \
     --skip-add-embeddings \
     --skip-index-creation
@@ -169,17 +172,17 @@ Each preset defines a series of simulated servers with appropriate shared_buffer
 
 **5M** (19-21 GB indexes): 8 GB through 256 GB servers
 ```bash
-utils/run_benchmarks.sh config/pgvector-5m-m16-128.yaml 5m
+utils/run_benchmarks.sh config/laion-5m-test-ip/pgvector-m16-128.yaml 5m
 ```
 
 **100M** (367-405 GB indexes): 64 GB through full machine
 ```bash
-utils/run_benchmarks.sh config/vectorchord-100m-570-320k.yaml 100m
+utils/run_benchmarks.sh config/laion-100m-test-ip/vectorchord-570-320k.yaml 100m
 ```
 
 **1B** (469-646 GB indexes): 128 GB through full machine (750 GB shared_buffers)
 ```bash
-utils/run_benchmarks.sh config/pgvector-1B-m16-128.yaml 1b
+utils/run_benchmarks.sh config/deep1b-test-l2/pgvector-m16-128.yaml 1b
 ```
 
 ### Multiple Client Counts
@@ -188,7 +191,7 @@ Run both single-client and parallel benchmarks in one pass:
 
 ```bash
 # Run with 1 and 32 clients at each server tier
-utils/run_benchmarks.sh config/pgvector-1B-m16-128.yaml 1b 1,32 1000
+utils/run_benchmarks.sh config/deep1b-test-l2/pgvector-m16-128.yaml 1b 1,32 1000
 ```
 
 ### Custom Server Tiers
@@ -196,7 +199,7 @@ utils/run_benchmarks.sh config/pgvector-1B-m16-128.yaml 1b 1,32 1000
 Specify custom `SB:RAM` pairs (shared_buffers GB : total RAM GB):
 
 ```bash
-utils/run_benchmarks.sh config/pgvector-100m-m16-128.yaml 32:128,64:256,128:512
+utils/run_benchmarks.sh config/laion-100m-test-ip/pgvector-m16-128.yaml 32:128,64:256,128:512
 ```
 
 ### How It Works
@@ -337,7 +340,7 @@ python chart_compare.py --tests pgvector-... vc-... --sb 32GB
 
 ```bash
 # Build the index without running query benchmarks
-python pgvector_suite.py -s config/pgvector-1B-m16-128.yaml --build-only --skip-add-embeddings
+python pgvector_suite.py -s config/deep1b-test-l2/pgvector-m16-128.yaml --build-only --skip-add-embeddings
 ```
 
 ### Metrics Reported
@@ -404,12 +407,22 @@ vector-search/
 ├── vectorchord_suite.py      # VectorChord IVF benchmarks
 ├── pgpu_suite.py             # GPU-accelerated benchmarks
 ├── requirements.txt          # Python dependencies
-├── config/                   # Benchmark configurations
-│   ├── pgvector-5m-m16-128.yaml
-│   ├── pgvector-100m-m16-128.yaml
-│   ├── vectorchord-5m-190-35k.yaml
-│   ├── vectorchord-deep1B-800-640k.yaml
-│   └── ...
+├── config/                   # Benchmark configurations, grouped by dataset
+│   ├── sift-128-euclidean/
+│   │   ├── pgvector-m16-64.yaml
+│   │   └── vectorchord-32-2k.yaml
+│   ├── glove-100-angular/
+│   ├── gist-960-euclidean/
+│   ├── laion-5m-test-ip/
+│   │   ├── pgvector-m16-64.yaml
+│   │   ├── pgvector-m16-128.yaml
+│   │   ├── vectorchord-50-8k.yaml
+│   │   ├── vectorchord-190-35k.yaml
+│   │   └── pgpu.yaml
+│   ├── laion-20m-test-ip/
+│   ├── laion-100m-test-ip/
+│   ├── laion-400m-test-ip/
+│   └── deep1b-test-l2/
 ├── monitor/
 │   ├── __init__.py           # Monitor package
 │   ├── system_monitor.py     # System metrics (psutil-based)

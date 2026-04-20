@@ -21,21 +21,21 @@ TOTAL_RAM_GB=1511
 #   PARK_NAME:   index rename suffix after benchmarking
 
 VC_PIPELINE=(
-  "vectorchord_suite.py|config/vectorchord-5m-50-8k.yaml|5m|64MB|1000|laion_5m_test_ip_vc_50_8k"
-  "vectorchord_suite.py|config/vectorchord-5m-190-35k.yaml|5m|64MB|1000|laion_5m_test_ip_vc_190_35k"
-  "vectorchord_suite.py|config/vectorchord-100m-400-160k.yaml|100m|64MB|1000|laion_100m_test_ip_vc_400_160k"
-  "vectorchord_suite.py|config/vectorchord-100m-570-320k.yaml|100m|64MB|1000|laion_100m_test_ip_vc_570_320k"
-  "vectorchord_suite.py|config/vectorchord-deep1B-400-160k.yaml|1b|64MB|1000|deep1b_test_l2_vc_400_160k"
-  "vectorchord_suite.py|config/vectorchord-deep1B-800-640k.yaml|1b|64MB|1000|deep1b_test_l2_vc_800_640k"
+  "vectorchord_suite.py|config/laion-5m-test-ip/vectorchord-50-8k.yaml|5m|64MB|1000|laion_5m_test_ip_vc_50_8k"
+  "vectorchord_suite.py|config/laion-5m-test-ip/vectorchord-190-35k.yaml|5m|64MB|1000|laion_5m_test_ip_vc_190_35k"
+  "vectorchord_suite.py|config/laion-100m-test-ip/vectorchord-400-160k.yaml|100m|64MB|1000|laion_100m_test_ip_vc_400_160k"
+  "vectorchord_suite.py|config/laion-100m-test-ip/vectorchord-570-320k.yaml|100m|64MB|1000|laion_100m_test_ip_vc_570_320k"
+  "vectorchord_suite.py|config/deep1b-test-l2/vectorchord-400-160k.yaml|1b|64MB|1000|deep1b_test_l2_vc_400_160k"
+  "vectorchord_suite.py|config/deep1b-test-l2/vectorchord-800-640k.yaml|1b|64MB|1000|deep1b_test_l2_vc_800_640k"
 )
 
 PGV_PIPELINE=(
-  "pgvector_suite.py|config/pgvector-5m-m16-64.yaml|5m|16GB|1000|laion_5m_test_ip_hnsw_m16_64"
-  "pgvector_suite.py|config/pgvector-5m-m16-128.yaml|5m|250GB|1000|laion_5m_test_ip_hnsw_m16_128"
-  "pgvector_suite.py|config/pgvector-100m-m16-64.yaml|100m|750GB|1000|laion_100m_test_ip_hnsw_m16_64"
-  "pgvector_suite.py|config/pgvector-100m-m16-128.yaml|100m|512GB|1000|laion_100m_test_ip_hnsw_m16_128"
-  "pgvector_suite.py|config/pgvector-1B-m16-64.yaml|1b|1024GB|1000|deep1b_test_l2_hnsw_m16_64"
-  "pgvector_suite.py|config/pgvector-1B-m16-128.yaml|1b|1024GB|1000|deep1b_test_l2_hnsw_m16_128"
+  "pgvector_suite.py|config/laion-5m-test-ip/pgvector-m16-64.yaml|5m|16GB|1000|laion_5m_test_ip_hnsw_m16_64"
+  "pgvector_suite.py|config/laion-5m-test-ip/pgvector-m16-128.yaml|5m|250GB|1000|laion_5m_test_ip_hnsw_m16_128"
+  "pgvector_suite.py|config/laion-100m-test-ip/pgvector-m16-64.yaml|100m|750GB|1000|laion_100m_test_ip_hnsw_m16_64"
+  "pgvector_suite.py|config/laion-100m-test-ip/pgvector-m16-128.yaml|100m|512GB|1000|laion_100m_test_ip_hnsw_m16_128"
+  "pgvector_suite.py|config/deep1b-test-l2/pgvector-m16-64.yaml|1b|1024GB|1000|deep1b_test_l2_hnsw_m16_64"
+  "pgvector_suite.py|config/deep1b-test-l2/pgvector-m16-128.yaml|1b|1024GB|1000|deep1b_test_l2_hnsw_m16_128"
 )
 
 CLIENTS="1,32"

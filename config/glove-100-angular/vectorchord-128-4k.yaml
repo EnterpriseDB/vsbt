@@ -1,0 +1,30 @@
+vc-glove-1m-128-4k:
+  dataset: glove-100-angular
+  datasetType: hdf5
+  metric: cos
+  samplingFactor: 256
+  lists: [128, 4096]
+  build_threads: 32
+  residual_quantization: true
+  kmeans_hierarchical: true
+  pg_parallel_workers: 32
+  top: 10
+  benchmarks:
+    10-80-1.9:
+      nprob: 10,80
+      epsilon: 1.9
+    25-220-1.9:
+      nprob: 25,220
+      epsilon: 1.9
+    43-430-1.9:
+      nprob: 43,430
+      epsilon: 1.9
+    70-700-1.9:
+      nprob: 70,700
+      epsilon: 1.9
+    100-1000-1.9:
+      nprob: 100,1000
+      epsilon: 1.9
+    140-1400-1.9:
+      nprob: 140,1400
+      epsilon: 1.9
