@@ -266,7 +266,7 @@ pip install -r requirements.txt
 
 To demonstrate running a benchmark, we'll execute the pgvector suite with the 5M vector dataset. This will test pgvector's performance with HNSW indexes (m=16) and 64-bit quantization.
 
-This test has the configuration file `config/pgvector-5m-m16-64.yaml` which specifies the dataset, index parameters, and query settings.
+This test has the configuration file `config/laion-5m-test-ip/pgvector-m16-64.yaml` which specifies the dataset, index parameters, and query settings.
 See the `/config` directory for other pre-defined benchmark configurations, or create your own custom configuration file.
 
 For more information on the 
@@ -279,7 +279,7 @@ cd vsbt
 source venv/bin/activate
 
 # Run pgvector benchmark with 5M vectors
-python pgvector_suite.py -s config/pgvector-5m-m16-64.yaml 
+python pgvector_suite.py -s config/laion-5m-test-ip/pgvector-m16-64.yaml 
 ```
 
 This downloads the dataset to `/datasets` (first run only), loads vectors, builds indexes, runs queries, and generates a report in `results/`.
@@ -289,7 +289,7 @@ See [README.md](README.md#output) for details on output format and generated rep
 **Example output:**
 
 ```sh
-python pgvector_suite.py -s config/pgvector-5m-m16-64.yaml
+python pgvector_suite.py -s config/laion-5m-test-ip/pgvector-m16-64.yaml
 Running test: pgvector-laion-5m-m16-64
 Table laion_5m_test_ip already exists, using it
 Dropping index laion_5m_test_ip_embedding_idx... done!
