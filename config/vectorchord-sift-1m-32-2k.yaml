@@ -1,9 +1,9 @@
-vc-sift-1m-32-1k:
+vc-sift-1m-32-2k:
   dataset: sift-128-euclidean
   datasetType: hdf5
   metric: l2
   samplingFactor: 256
-  lists: [32, 1024]
+  lists: [32, 2048]
   build_threads: 32
   residual_quantization: true
   kmeans_hierarchical: true
@@ -13,14 +13,14 @@ vc-sift-1m-32-1k:
     3-10-1.9:
       nprob: 3,10
       epsilon: 1.9
-    5-16-1.9:
-      nprob: 5,16
-      epsilon: 1.9
     8-25-1.9:
       nprob: 8,25
       epsilon: 1.9
     13-40-1.9:
       nprob: 13,40
+      epsilon: 1.9
+    15-48-1.9:
+      nprob: 15,48
       epsilon: 1.9
     20-64-1.9:
       nprob: 20,64
