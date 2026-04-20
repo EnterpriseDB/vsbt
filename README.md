@@ -21,7 +21,8 @@ A comprehensive benchmarking tool for PostgreSQL vector search extensions. Compa
 | laion-400m-test-ip | 400M | 512 | Inner Product | NPY (multipart) |
 | deep1b-test-l2 | 1B | 96 | L2 | NPY (mmap) |
 | sift-128-euclidean | 1M | 128 | L2 | HDF5 |
-| glove-test-cos | 1.2M | 100 | Cosine | HDF5 |
+| glove-100-angular | 1.2M | 100 | Cosine | HDF5 |
+| gist-960-euclidean | 1M | 960 | L2 | HDF5 |
 
 Datasets are automatically downloaded on first use.
 

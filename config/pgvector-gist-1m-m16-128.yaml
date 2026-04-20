@@ -1,0 +1,15 @@
+pgvector-gist-1m-m16-128:
+  dataset: gist-960-euclidean
+  datasetType: hdf5
+  pg_parallel_workers: 32
+  metric: l2
+  m: 16
+  efConstruction: 128
+  top: 10
+  benchmarks:
+    "60":  { efSearch: 60 }
+    "100": { efSearch: 100 }
+    "160": { efSearch: 160 }
+    "260": { efSearch: 260 }
+    "400": { efSearch: 400 }
+    "600": { efSearch: 600 }

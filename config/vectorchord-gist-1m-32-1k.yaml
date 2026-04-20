@@ -1,0 +1,30 @@
+vc-gist-1m-32-1k:
+  dataset: gist-960-euclidean
+  datasetType: hdf5
+  metric: l2
+  samplingFactor: 256
+  lists: [32, 1024]
+  build_threads: 32
+  residual_quantization: true
+  kmeans_hierarchical: true
+  pg_parallel_workers: 32
+  top: 10
+  benchmarks:
+    5-16-1.9:
+      nprob: 5,16
+      epsilon: 1.9
+    8-25-1.9:
+      nprob: 8,25
+      epsilon: 1.9
+    13-40-1.9:
+      nprob: 13,40
+      epsilon: 1.9
+    20-64-1.9:
+      nprob: 20,64
+      epsilon: 1.9
+    30-100-1.9:
+      nprob: 30,100
+      epsilon: 1.9
+    45-150-1.9:
+      nprob: 45,150
+      epsilon: 1.9

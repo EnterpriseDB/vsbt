@@ -26,6 +26,21 @@ DATASETS = {
         "metric": "ip",
         "type": "hdf5"
     },
+    "sift-128-euclidean": {
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/sift-128-euclidean.hdf5",
+        "metric": "l2",
+        "type": "hdf5"
+    },
+    "glove-100-angular": {
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/glove-100-angular.hdf5",
+        "metric": "cos",
+        "type": "hdf5"
+    },
+    "gist-960-euclidean": {
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/gist-960-euclidean.hdf5",
+        "metric": "l2",
+        "type": "hdf5"
+    },
 
     # --- Custom NPY Datasets ---
     "laion-400m-test-ip": {
