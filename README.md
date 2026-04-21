@@ -7,6 +7,7 @@ A comprehensive benchmarking tool for PostgreSQL vector search extensions. Compa
 | Extension | Index Type | Description |
 |-----------|------------|-------------|
 | **[pgvector](https://github.com/pgvector/pgvector)** | [HNSW](https://arxiv.org/abs/1603.09320) | Standard CPU-based approximate nearest neighbor search |
+| **[pgvector](https://github.com/pgvector/pgvector)** | IVFFlat BQ + Rerank | IVFFlat with binary quantization and halfvec re-ranking |
 | **[vchordq](https://github.com/tensorchord/VectorChord)** | [IVF-RaBitQ](https://arxiv.org/abs/2405.12497) ([VectorChord](https://blog.vectorchord.ai/scaling-vector-search-to-1-billion-on-postgresql)) | High dimensionality & high performance vector quantization & compression |
 | **[pgpu](https://github.com/EnterpriseDB/pgpu)** | IVF-RaBitQ (VectorChord) | GPU-accelerated index building for VectorChord |
 
@@ -101,6 +102,16 @@ python pgvector_suite.py -s config/laion-5m-test-ip/pgvector-m16-128.yaml
 
 # Skip loading if data already exists
 python pgvector_suite.py -s config/laion-5m-test-ip/pgvector-m16-128.yaml --skip-add-embeddings
+```
+
+### Running IVFFlat BQ Rerank Benchmarks
+
+```bash
+# Run with 5M dataset configuration
+python ivfflat_bq_rerank_suite.py -s config/ivfflat_bq_rerank-5m.yaml
+
+# Skip loading if data already exists
+python ivfflat_bq_rerank_suite.py -s config/ivfflat_bq_rerank-5m.yaml --skip-add-embeddings
 ```
 
 ### Running VectorChord Benchmarks
@@ -260,6 +271,29 @@ vc-laion-5m-190-35k:
       epsilon: 1.9
 ```
 
+### IVFFlat BQ Rerank Configuration Example
+
+```yaml
+ivfflat-bq-rerank-laion-5m:
+  dataset: laion-5m-test-ip
+  datasetType: hdf5
+  metric: dot
+  lists: 2236
+  maintenance_work_mem: 4GB
+  pg_parallel_workers: 4
+  top: 10
+  benchmarks:
+    probes10-rerank20:
+      probes: 10
+      rerank_limit_amplify_factor: 20
+    probes40-rerank20:
+      probes: 40
+      rerank_limit_amplify_factor: 20
+    probes40-rerank50:
+      probes: 40
+      rerank_limit_amplify_factor: 50
+```
+
 ### PGPU Configuration Example
 
 ```yaml
@@ -403,7 +437,8 @@ vector-search/
 ├── results.py                # Results management and visualization
 ├── compare_runs.py           # Historical benchmark comparison utility
 ├── chart_compare.py          # Cross-run comparison chart generator
-├── pgvector_suite.py         # pgvector HNSW benchmarks
+├── pgvector_suite.py         # pgvector HNSW + IVFFlat BQ Rerank benchmarks
+├── ivfflat_bq_rerank_suite.py # IVFFlat BQ Rerank entry point
 ├── vectorchord_suite.py      # VectorChord IVF benchmarks
 ├── pgpu_suite.py             # GPU-accelerated benchmarks
 ├── requirements.txt          # Python dependencies

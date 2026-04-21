@@ -159,8 +159,9 @@ class ResultsManager:
             "ef_search": benchmark_config.get("efSearch", "N/A"),
             "lists": str(config.get("lists", results.get("lists", "N/A"))),
             "sampling_factor": config.get("samplingFactor", "N/A"),
-            "nprob": benchmark_config.get("nprob", "N/A"),
+            "nprob": benchmark_config.get("nprob", benchmark_config.get("probes", "N/A")),
             "epsilon": benchmark_config.get("epsilon", "N/A"),
+            "rerank_limit_amplify_factor": benchmark_config.get("rerank_limit_amplify_factor", "N/A"),
             "residual_quantization": config.get("residual_quantization", "N/A"),
             "build_threads": results.get("build_threads", "N/A"),
             "load_time_s": results.get("load_time", "N/A"),
@@ -399,6 +400,10 @@ class ResultsManager:
                 ["M", str(config.get("m", "N/A"))],
                 ["EF Construction", str(config.get("efConstruction", "N/A"))],
             ])
+        elif suite_type == "ivfflat_bq_rerank":
+            config_rows.extend([
+                ["Lists", str(config.get("lists", results.get("lists", "N/A")))],
+            ])
         elif suite_type in ("vectorchord", "pgpu"):
             config_rows.extend([
                 ["Lists", str(config.get("lists", results.get("lists", "N/A")))],
@@ -442,6 +447,15 @@ class ResultsManager:
                         f"{br['p50_latency']:.2f}",
                         f"{br['p99_latency']:.2f}",
                     ])
+                elif suite_type == "ivfflat_bq_rerank":
+                    bench_rows.append([
+                        str(bench_config.get("probes", "N/A")),
+                        str(bench_config.get("rerank_limit_amplify_factor", "N/A")),
+                        f"{br['recall']:.4f}",
+                        f"{br['qps']:.2f}",
+                        f"{br['p50_latency']:.2f}",
+                        f"{br['p99_latency']:.2f}",
+                    ])
                 else:
                     bench_rows.append([
                         str(bench_config.get("nprob", "N/A")),
@@ -457,6 +471,9 @@ class ResultsManager:
             if suite_type == "pgvector":
                 lines.extend(format_markdown_table(
                     ["EF Search", "Recall", "QPS", "P50 (ms)", "P99 (ms)"], bench_rows))
+            elif suite_type == "ivfflat_bq_rerank":
+                lines.extend(format_markdown_table(
+                    ["Probes", "Rerank Amp", "Recall", "QPS", "P50 (ms)", "P99 (ms)"], bench_rows))
             else:
                 lines.extend(format_markdown_table(
                     ["nprob", "epsilon", "Recall", "QPS", "P50 (ms)", "P99 (ms)"], bench_rows))
@@ -587,6 +604,18 @@ class ResultsManager:
                             f"{br['p50_latency']:.2f}",
                             f"{br['p99_latency']:.2f}",
                         ])
+                    elif suite_type == "ivfflat_bq_rerank":
+                        bench_rows.append([
+                            run_date,
+                            sb,
+                            str(qc),
+                            str(bench_config.get("probes", "N/A")),
+                            str(bench_config.get("rerank_limit_amplify_factor", "N/A")),
+                            f"{br['recall']:.4f}",
+                            f"{br['qps']:.2f}",
+                            f"{br['p50_latency']:.2f}",
+                            f"{br['p99_latency']:.2f}",
+                        ])
                     else:
                         bench_rows.append([
                             run_date,
@@ -605,6 +634,11 @@ class ResultsManager:
                 lines.extend(format_markdown_table(
                     ["Date", "shared_buffers", "Clients",
                      "EF Search", "Recall", "QPS", "P50 (ms)", "P99 (ms)"],
+                    bench_rows))
+            elif suite_type == "ivfflat_bq_rerank":
+                lines.extend(format_markdown_table(
+                    ["Date", "shared_buffers", "Clients",
+                     "Probes", "Rerank Amp", "Recall", "QPS", "P50 (ms)", "P99 (ms)"],
                     bench_rows))
             else:
                 lines.extend(format_markdown_table(
