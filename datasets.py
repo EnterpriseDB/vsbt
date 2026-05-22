@@ -53,6 +53,13 @@ DATASETS = {
         "dim": 960,
         "num": 1_000_000
     },
+    "dbpedia-openai-1000k-angular": {
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/dbpedia-openai-1000k-angular.hdf5",
+        "metric": "cos",
+        "type": "hdf5",
+        "dim": 1536,
+        "num": 990_000
+    },
 
     # --- Custom NPY Datasets ---
     "laion-400m-test-ip": {
