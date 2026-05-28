@@ -32,6 +32,17 @@ class TestSuite(common.TestSuite):
     then queries using VectorChord's vchordrq index type.
     """
 
+    BENCH_PARAM_COLUMNS = [
+        ("nprob",   "Probes"),
+        ("epsilon", "Epsilon"),
+    ]
+
+    CONFIG_COLUMNS = [
+        ("Lists",                 lambda c, r: str(c.get("lists", r.get("lists", "N/A")))),
+        ("Sampling Factor",       lambda c, r: str(c.get("samplingFactor", "N/A"))),
+        ("Residual Quantization", lambda c, r: str(c.get("residual_quantization", "N/A"))),
+    ]
+
     def index_name(self, table_name: str) -> str:
         return f"{table_name}_pgpu_ext"
 
@@ -282,6 +293,8 @@ class TestSuite(common.TestSuite):
                 system_metrics=system_metrics,
                 pg_stats=pg_stats,
                 system_dashboard_path=dashboard_path,
+                config_columns=self.CONFIG_COLUMNS,
+                bench_columns=self.BENCH_PARAM_COLUMNS,
             )
 
 

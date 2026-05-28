@@ -1,18 +1,318 @@
 """
 pgvector Benchmark Suite
 
-Benchmarks vector search using the pgvector extension with HNSW indexes
-for PostgreSQL.
+Benchmarks vector search using the pgvector extension with HNSW or
+IVFFlat indexes (vanilla and BQ + rerank variants) for PostgreSQL.
+
+A single PgvectorTestSuite handles all three index types. The per-index
+variation lives in INDEX_SPECS — small functions that build the CREATE
+INDEX statement, the per-benchmark session GUCs, and the per-benchmark
+query template. Everything else (warmup, sequential / parallel
+benchmark, monitoring, report generation) is shared.
 """
 
 import argparse
+import math
 import time
+from dataclasses import dataclass
+from typing import Callable
 
 import psycopg
 import pgvector.psycopg
 
 import common
 from results import ResultsManager
+
+# Default candidate-set amplification for IVFFlat-BQ + rerank: a query
+# pulls top * DEFAULT_RERANK_AMP rows from the binary-quantized index
+# before re-sorting by exact distance.
+DEFAULT_RERANK_AMP = 20
+
+# Operator + opclass per metric, shared across all pgvector index types.
+_METRIC_OPS = {
+    "l2": "<->", "euclidean": "<->",
+    "cos": "<=>", "angular": "<=>",
+    "dot": "<#>", "ip": "<#>",
+}
+_METRIC_FUNCS = {
+    "l2": "vector_l2_ops", "euclidean": "vector_l2_ops",
+    "cos": "vector_cosine_ops",
+    "ip": "vector_ip_ops", "dot": "vector_ip_ops",
+}
+
+
+def _metric_op(metric: str) -> str:
+    if metric not in _METRIC_OPS:
+        raise ValueError(f"Unsupported metric type: {metric}")
+    return _METRIC_OPS[metric]
+
+
+def _metric_func(metric: str) -> str:
+    if metric not in _METRIC_FUNCS:
+        raise ValueError(f"Unsupported metric type: {metric}")
+    return _METRIC_FUNCS[metric]
+
+
+@dataclass(frozen=True)
+class IndexSpec:
+    """Per-index-type variation. A PgvectorTestSuite holds one of these."""
+
+    # YAML `indexType` value. Also passed through as `suite_type` to
+    # ResultsManager so the markdown/csv layer renders the right columns.
+    index_type: str
+    suite_type: str
+
+    # Builds the per-benchmark query: returns (sql_template, bind_fn).
+    # Used by both the warmup loop and sequential_bench measurement loop.
+    query_template: Callable[[str, dict, str, int, dict], tuple[str, Callable]]
+
+    # `(query, rerank_limit, query)` for two-stage queries, `(query,)` for
+    # single-stage. Held separately because process_batch runs in a
+    # multiprocessing worker where lambdas can't cross the pickle boundary.
+    bind_kind: str   # "single" or "two_stage"
+
+    # Per-benchmark session GUCs (`SET ...` statements as full SQL strings).
+    session_gucs: Callable[[dict], list[str]]
+
+    # `CREATE INDEX ...` statement.
+    create_index_sql: Callable[[str, dict, dict], str]
+
+    # Optional debug print invoked from create_index after `lists` resolution.
+    debug_print: Callable[[dict, dict], None]
+
+    # (benchmark-dict key, column header) pairs for the summary table —
+    # consumed by common.TestSuite.print_summary_table via
+    # PgvectorTestSuite.BENCH_PARAM_COLUMNS.
+    bench_param_columns: tuple[tuple[str, str], ...]
+
+    # (label, extractor(config, results) -> str) rows for the per-run
+    # markdown "Configuration" table — consumed via
+    # PgvectorTestSuite.CONFIG_COLUMNS.
+    config_columns: tuple
+
+
+def _ivfflat_resolve_lists(config: dict, dataset: dict) -> int:
+    lists = config["lists"]
+    if lists == "auto":
+        lists = max(1, int(math.sqrt(dataset["num"])))
+    return lists
+
+
+def _hnsw_query_template(table_name, dataset, metric_ops, top, benchmark):
+    sql = (
+        f"SELECT id FROM {table_name} ORDER BY embedding {metric_ops} %s "
+        f"LIMIT {top}"
+    )
+    return sql, (lambda q: (q,))
+
+
+def _hnsw_session_gucs(benchmark):
+    return [
+        f"SET hnsw.ef_search={benchmark['efSearch']}",
+        "SET enable_seqscan = off",
+    ]
+
+
+def _hnsw_create_index_sql(table_name, config, dataset):
+    metric_func = _metric_func(dataset["metric"])
+    return (
+        f"CREATE INDEX {table_name}_embedding_idx ON {table_name} "
+        f"USING hnsw (embedding {metric_func}) "
+        f"WITH (m = {config['m']}, ef_construction = {config['efConstruction']})"
+    )
+
+
+def _hnsw_debug_print(config, dataset):
+    print(f"\n🔧 Index Configuration (HNSW):")
+    print(f"    • M:               {config['m']}")
+    print(f"    • EF Construction: {config['efConstruction']}")
+    print(f"    • Metric Function: {_metric_func(dataset['metric'])}")
+    print()
+
+
+def _ivfflat_query_template(table_name, dataset, metric_ops, top, benchmark):
+    sql = (
+        f"SELECT id FROM {table_name} ORDER BY embedding {metric_ops} %s "
+        f"LIMIT {top}"
+    )
+    return sql, (lambda q: (q,))
+
+
+def _ivfflat_session_gucs(benchmark):
+    return [
+        f"SET ivfflat.probes TO {benchmark['probes']}",
+        "SET enable_seqscan = off",
+    ]
+
+
+def _ivfflat_create_index_sql(table_name, config, dataset):
+    lists = _ivfflat_resolve_lists(config, dataset)
+    metric_func = _metric_func(dataset["metric"])
+    return (
+        f"CREATE INDEX {table_name}_embedding_idx ON {table_name} "
+        f"USING ivfflat (embedding {metric_func}) WITH (lists = {lists})"
+    )
+
+
+def _ivfflat_debug_print(config, dataset):
+    lists = _ivfflat_resolve_lists(config, dataset)
+    print(f"\n🔧 Index Configuration (IVFFlat):")
+    print(f"    • Lists:           {lists}")
+    print(f"    • Metric Function: {_metric_func(dataset['metric'])}")
+    print()
+
+
+def _bq_rerank_two_stage_sql(table_name, dim, rerank_op, top):
+    return (
+        f"SELECT id FROM ("
+        f"SELECT id, embedding FROM {table_name} "
+        f"ORDER BY binary_quantize(embedding)::bit({dim}) <~> "
+        f"binary_quantize(%s::vector({dim}))::bit({dim}) "
+        f"LIMIT %s::int"
+        f") sub "
+        f"ORDER BY embedding {rerank_op} %s::vector({dim}) "
+        f"LIMIT {top}"
+    )
+
+
+def _bq_rerank_query_template(table_name, dataset, metric_ops, top, benchmark):
+    dim = dataset["dim"]
+    rerank_amp = (benchmark or {}).get(
+        "rerank_limit_amplify_factor", DEFAULT_RERANK_AMP
+    )
+    rerank_limit = top * rerank_amp
+    sql = _bq_rerank_two_stage_sql(table_name, dim, metric_ops, top)
+    return sql, (lambda q: (q, rerank_limit, q))
+
+
+def _bq_rerank_session_gucs(benchmark):
+    # No `enable_seqscan = off`: in two-stage rerank a seq scan over a
+    # tiny candidate set is expected and harmless.
+    return [f"SET ivfflat.probes TO {benchmark['probes']}"]
+
+
+def _bq_rerank_create_index_sql(table_name, config, dataset):
+    lists = _ivfflat_resolve_lists(config, dataset)
+    dim = dataset["dim"]
+    return (
+        f"CREATE INDEX {table_name}_embedding_idx ON {table_name} "
+        f"USING ivfflat ((binary_quantize(embedding)::bit({dim})) bit_hamming_ops) "
+        f"WITH (lists = {lists})"
+    )
+
+
+def _bq_rerank_debug_print(config, dataset):
+    lists = _ivfflat_resolve_lists(config, dataset)
+    print(f"\n🔧 Index Configuration (IVFFlat BQ Rerank):")
+    print(f"    • Lists:           {lists}")
+    print(f"    • Dimensions:      {dataset['dim']}")
+    print()
+
+
+_HNSW_CONFIG_COLUMNS = (
+    ("M",               lambda c, r: str(c.get("m", "N/A"))),
+    ("EF Construction", lambda c, r: str(c.get("efConstruction", "N/A"))),
+)
+
+_IVFFLAT_CONFIG_COLUMNS = (
+    ("Lists", lambda c, r: str(c.get("lists", r.get("lists", "N/A")))),
+)
+
+
+INDEX_SPECS = {
+    "hnsw": IndexSpec(
+        index_type="hnsw",
+        suite_type="pgvector",
+        query_template=_hnsw_query_template,
+        bind_kind="single",
+        session_gucs=_hnsw_session_gucs,
+        create_index_sql=_hnsw_create_index_sql,
+        debug_print=_hnsw_debug_print,
+        bench_param_columns=(("efSearch", "EF Search"),),
+        config_columns=_HNSW_CONFIG_COLUMNS,
+    ),
+    "ivfflat": IndexSpec(
+        index_type="ivfflat",
+        suite_type="ivfflat",
+        query_template=_ivfflat_query_template,
+        bind_kind="single",
+        session_gucs=_ivfflat_session_gucs,
+        create_index_sql=_ivfflat_create_index_sql,
+        debug_print=_ivfflat_debug_print,
+        bench_param_columns=(("probes", "Probes"),),
+        config_columns=_IVFFLAT_CONFIG_COLUMNS,
+    ),
+    "ivfflat_bq_rerank": IndexSpec(
+        index_type="ivfflat_bq_rerank",
+        suite_type="ivfflat_bq_rerank",
+        query_template=_bq_rerank_query_template,
+        bind_kind="two_stage",
+        session_gucs=_bq_rerank_session_gucs,
+        create_index_sql=_bq_rerank_create_index_sql,
+        debug_print=_bq_rerank_debug_print,
+        bench_param_columns=(
+            ("probes", "Probes"),
+            ("rerank_limit_amplify_factor", "Rerank Amp"),
+        ),
+        config_columns=_IVFFLAT_CONFIG_COLUMNS,
+    ),
+}
+
+
+# HNSW build memory / on-disk size estimators. Live next to the spec because
+# only HNSW currently uses them; called from create_index when the index
+# type is hnsw.
+def _maxalign(x):
+    return (x + 7) & ~7
+
+
+def _estimate_hnsw_graph_memory(num_vectors: int, dim: int, m: int) -> int:
+    """Estimate maintenance_work_mem needed for an in-memory HNSW build.
+
+    Based on pgvector's in-memory graph layout (HnswElementData, neighbor
+    arrays, and vector storage). Each node at level L consumes:
+
+      MAXALIGN(sizeof(HnswElementData))        ~128 bytes
+      MAXALIGN(8 + 4*dim)                      vector value
+      MAXALIGN(8 * (L+1))                      neighbor list pointers
+      MAXALIGN(8 + 32*m)                       layer 0 neighbor array
+      L * MAXALIGN(8 + 16*m)                   upper layer neighbor arrays
+
+    Levels follow P(level >= L) = (1/m)^L, so the expected upper-layer
+    overhead per node is (1/(m-1)) * (8 + MAXALIGN(8 + 16*m)).
+    """
+    element_size = 128
+    vector_size = _maxalign(8 + 4 * dim)
+    layer0_neighbors = _maxalign(8 + 32 * m)
+    layer0_ptrs = _maxalign(8)
+    upper_layer_cost = _maxalign(8) + _maxalign(8 + 16 * m)
+    upper_layer_fraction = 1.0 / (m - 1) if m > 1 else 0
+    avg_per_node = (
+        element_size + vector_size + layer0_ptrs + layer0_neighbors
+        + upper_layer_fraction * upper_layer_cost
+    )
+    return int(num_vectors * avg_per_node)
+
+
+def _estimate_hnsw_index_size(num_vectors: int, dim: int, m: int) -> int:
+    """Estimate on-disk HNSW index size based on pgvector's page layout.
+
+    Validated against:
+      dim=96,  m=16, 1B vectors  → predicts 632 GB (actual 646 GB, ~2% off)
+      dim=768, m=16, 5M vectors  → predicts 19.0 GB (actual 18.8 GB, ~1% off)
+    """
+    USABLE_PAGE = 8192 - 40
+    TUPLE_OVERHEAD = 32
+    NEIGHBOR_SIZE = 6
+
+    vector_bytes = _maxalign(8 + 4 * dim)
+    neighbor_bytes_l0 = _maxalign(4 + 2 * m * NEIGHBOR_SIZE)
+    upper_neighbor_avg = _maxalign(4 + m * NEIGHBOR_SIZE) / (m - 1) if m > 1 else 0
+    raw_node_size = TUPLE_OVERHEAD + vector_bytes + neighbor_bytes_l0 + int(upper_neighbor_avg)
+
+    nodes_per_page = max(1, USABLE_PAGE // raw_node_size)
+    actual_bytes_per_node = USABLE_PAGE / nodes_per_page
+    return int(actual_bytes_per_node * num_vectors)
 
 
 def build_arg_parse():
@@ -22,100 +322,36 @@ def build_arg_parse():
     return parser
 
 
-class TestSuite(common.TestSuite):
-    """
-    Test suite for pgvector HNSW indexing.
+class PgvectorTestSuite(common.TestSuite):
+    """Single suite for HNSW / IVFFlat / IVFFlat-BQ-Rerank, dispatched by
+    the YAML `indexType` field via INDEX_SPECS."""
 
-    Uses the pgvector extension to build HNSW indexes and perform
-    approximate nearest neighbor searches.
-    """
-
-    @staticmethod
-    def process_batch(args):
-        """Process a batch of queries in parallel."""
-        test, answer, top, metric_ops, url, table_name, ef_search, warmup_n = args
-
-        conn = psycopg.connect(url)
-        pgvector.psycopg.register_vector(conn)
-        conn.execute(f"SET hnsw.ef_search={ef_search}")
-        conn.execute("SET enable_seqscan = off")
-
-        query_sql = f"SELECT id FROM {table_name} ORDER BY embedding {metric_ops} %s LIMIT {top}"
-
-        cursor = conn.cursor()
-
-        # Per-worker warmup (warms this process's CPU caches); latencies
-        # and results never enter the returned list.
-        if warmup_n:
-            n_test = len(test)
-            for j in range(warmup_n):
-                cursor.execute(query_sql, (test[j % n_test],))
-                cursor.fetchall()
-
-        results = []
-        for query, ground_truth in zip(test, answer):
-            start = time.perf_counter()
-            cursor.execute(query_sql, (query,))
-            result = cursor.fetchall()
-            end = time.perf_counter()
-
-            result_ids = {p[0] for p in result[:top]}
-            gt_ids = ground_truth[:top]
-            ground_truth_ids = set(gt_ids.tolist() if hasattr(gt_ids, "tolist") else gt_ids)
-            hit = len(result_ids & ground_truth_ids)
-            results.append((hit, (start, end)))
-
-        cursor.close()
-        conn.close()
-        return results
-
-    def make_batch_args(self, test, answer, top, metric, table_name, benchmark,
-                        warmup_n=0):
-        """Prepare arguments for parallel batch processing."""
-        metric_ops = self._get_metric_operator(metric)
-        return (
-            test,
-            answer,
-            top,
-            metric_ops,
-            self.url,
-            table_name,
-            benchmark["efSearch"],
-            warmup_n,
-        )
-
-    def apply_session_guc(self, conn, benchmark):
-        conn.execute(f"SET hnsw.ef_search={benchmark['efSearch']}")
-        conn.execute("SET enable_seqscan = off")
-
-    @staticmethod
-    def _get_metric_operator(metric: str) -> str:
-        """Convert metric name to PostgreSQL operator."""
-        operators = {
-            "l2": "<->",
-            "euclidean": "<->",
-            "cos": "<=>",
-            "angular": "<=>",
-            "dot": "<#>",
-            "ip": "<#>",
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # All sub-configs in one YAML must agree on indexType — the suite
+        # is created once and the spec is fixed.
+        index_types = {
+            cfg.get("indexType", "hnsw") for cfg in self.config.values()
         }
-        if metric not in operators:
-            raise ValueError(f"Unsupported metric type: {metric}")
-        return operators[metric]
+        if len(index_types) > 1:
+            raise ValueError(
+                f"Mixed indexTypes in one suite are not supported: {sorted(index_types)}"
+            )
+        index_type = next(iter(index_types))
+        if index_type not in INDEX_SPECS:
+            raise ValueError(
+                f"Unknown indexType {index_type!r}; "
+                f"expected one of {sorted(INDEX_SPECS)}"
+            )
+        self.spec = INDEX_SPECS[index_type]
 
-    @staticmethod
-    def _get_metric_func(metric: str) -> str:
-        """Convert metric name to pgvector operator class."""
-        funcs = {
-            "l2": "vector_l2_ops",
-            "euclidean": "vector_l2_ops",
-            "cos": "vector_cosine_ops",
-            "ip": "vector_ip_ops",
-            "dot": "vector_ip_ops",
-        }
-        if metric not in funcs:
-            raise ValueError(f"Unsupported metric type: {metric}")
-        return funcs[metric]
+    @property
+    def BENCH_PARAM_COLUMNS(self):
+        return self.spec.bench_param_columns
+
+    @property
+    def CONFIG_COLUMNS(self):
+        return self.spec.config_columns
 
     def create_connection(self):
         """Create a database connection with pgvector support."""
@@ -150,112 +386,140 @@ class TestSuite(common.TestSuite):
             conn.close()
 
     @staticmethod
-    def estimate_hnsw_graph_memory(num_vectors: int, dim: int, m: int) -> int:
-        """Estimate maintenance_work_mem needed for an in-memory HNSW build.
-
-        Based on pgvector's in-memory graph layout (HnswElementData, neighbor
-        arrays, and vector storage). Each node at level L consumes:
-
-          MAXALIGN(sizeof(HnswElementData))        ~128 bytes
-          MAXALIGN(8 + 4*dim)                      vector value
-          MAXALIGN(8 * (L+1))                      neighbor list pointers
-          MAXALIGN(8 + 32*m)                       layer 0 neighbor array
-          L * MAXALIGN(8 + 16*m)                   upper layer neighbor arrays
-
-        Levels follow P(level >= L) = (1/m)^L, so the expected upper-layer
-        overhead per node is (1/(m-1)) * (8 + MAXALIGN(8 + 16*m)).
-        """
-        def maxalign(x):
-            return (x + 7) & ~7
-
-        element_size = 128  # sizeof(HnswElementData) after alignment
-        vector_size = maxalign(8 + 4 * dim)
-        layer0_neighbors = maxalign(8 + 32 * m)
-        layer0_ptrs = maxalign(8)  # neighbor list pointer for layer 0
-        upper_layer_cost = maxalign(8) + maxalign(8 + 16 * m)
-        upper_layer_fraction = 1.0 / (m - 1) if m > 1 else 0
-
-        avg_per_node = (
-            element_size
-            + vector_size
-            + layer0_ptrs
-            + layer0_neighbors
-            + upper_layer_fraction * upper_layer_cost
-        )
-
-        return int(num_vectors * avg_per_node)
+    def _get_metric_operator(metric: str) -> str:
+        return _metric_op(metric)
 
     @staticmethod
-    def estimate_hnsw_index_size(num_vectors: int, dim: int, m: int) -> int:
-        """Estimate on-disk HNSW index size based on pgvector's page layout.
+    def _get_metric_func(metric: str) -> str:
+        return _metric_func(metric)
 
-        Each node on disk stores the vector, layer-0 neighbors (2*M entries),
-        and a fraction of upper-layer neighbors. Nodes are packed into 8KB
-        PostgreSQL pages, and page fragmentation waste is accounted for.
+    @staticmethod
+    def process_batch(args):
+        """Run a worker batch. The arg tuple is built by make_batch_args
+        and is fully serializable (no lambdas) so it crosses the
+        multiprocessing pickle boundary."""
+        (test, answer, top, query_sql, bind_kind, rerank_limit, gucs,
+         url, warmup_n) = args
 
-        Validated against:
-          dim=96,  m=16, 1B vectors  → predicts 632 GB (actual 646 GB, ~2% off)
-          dim=768, m=16, 5M vectors  → predicts 19.0 GB (actual 18.8 GB, ~1% off)
-        """
-        def maxalign(x):
-            return (x + 7) & ~7
+        conn = psycopg.connect(url)
+        pgvector.psycopg.register_vector(conn)
+        for stmt in gucs:
+            conn.execute(stmt)
 
-        USABLE_PAGE = 8192 - 40  # page header + HNSW special space
-        TUPLE_OVERHEAD = 32      # line pointer (4) + tuple header (~28)
-        NEIGHBOR_SIZE = 6        # ItemPointerData: BlockIdData(4) + OffsetNumber(2)
+        cursor = conn.cursor()
 
-        vector_bytes = maxalign(8 + 4 * dim)
-        neighbor_bytes_l0 = maxalign(4 + 2 * m * NEIGHBOR_SIZE)
-        upper_neighbor_avg = maxalign(4 + m * NEIGHBOR_SIZE) / (m - 1) if m > 1 else 0
-        raw_node_size = TUPLE_OVERHEAD + vector_bytes + neighbor_bytes_l0 + int(upper_neighbor_avg)
+        if bind_kind == "two_stage":
+            def bind(q):
+                return (q, rerank_limit, q)
+        else:
+            def bind(q):
+                return (q,)
 
-        nodes_per_page = max(1, USABLE_PAGE // raw_node_size)
-        actual_bytes_per_node = USABLE_PAGE / nodes_per_page
+        if warmup_n:
+            n_test = len(test)
+            for j in range(warmup_n):
+                cursor.execute(query_sql, bind(test[j % n_test]))
+                cursor.fetchall()
 
-        return int(actual_bytes_per_node * num_vectors)
+        results = []
+        for query, ground_truth in zip(test, answer):
+            start = time.perf_counter()
+            cursor.execute(query_sql, bind(query))
+            result = cursor.fetchall()
+            end = time.perf_counter()
+
+            result_ids = {p[0] for p in result[:top]}
+            gt_ids = ground_truth[:top]
+            ground_truth_ids = set(
+                gt_ids.tolist() if hasattr(gt_ids, "tolist") else gt_ids
+            )
+            hit = len(result_ids & ground_truth_ids)
+            results.append((hit, (start, end)))
+
+        cursor.close()
+        conn.close()
+        return results
+
+    def make_batch_args(self, test, answer, top, metric, table_name, benchmark,
+                        warmup_n=0):
+        metric_ops = _metric_op(metric)
+        # warmup_query is the canonical (sql, bind_fn) source. We discard
+        # bind_fn here because it can't be pickled and reconstruct it in
+        # the worker from bind_kind + rerank_limit.
+        sql, _bind_fn = self.warmup_query(
+            table_name, {"dim": test.shape[1], "metric": metric}, metric_ops,
+            top, benchmark,
+        )
+        rerank_limit = 0
+        if self.spec.bind_kind == "two_stage":
+            rerank_amp = benchmark.get(
+                "rerank_limit_amplify_factor", DEFAULT_RERANK_AMP
+            )
+            rerank_limit = top * rerank_amp
+        return (
+            test,
+            answer,
+            top,
+            sql,
+            self.spec.bind_kind,
+            rerank_limit,
+            self.spec.session_gucs(benchmark),
+            self.url,
+            warmup_n,
+        )
+
+    def apply_session_guc(self, conn, benchmark):
+        for stmt in self.spec.session_gucs(benchmark):
+            conn.execute(stmt)
+
+    def warmup_query(self, table_name, dataset, metric_ops, top, benchmark):
+        return self.spec.query_template(
+            table_name, dataset, metric_ops, top, benchmark
+        )
 
     def create_index(self, suite_name: str, table_name: str, dataset: dict):
-        """Create an HNSW index using pgvector."""
+        """Create the pgvector index for this suite's IndexSpec
+        (HNSW, IVFFlat, or IVFFlat-BQ-Rerank)."""
         event, index_monitor_thread = super().create_index(
             suite_name, table_name, dataset
         )
 
         config = self.config[suite_name]
-        pg_parallel_workers = config["pg_parallel_workers"]
-        m = config["m"]
-        ef_construction = config["efConstruction"]
-        metric = dataset["metric"]
-        metric_func = self._get_metric_func(metric)
+        pg_parallel_workers = config.get("pg_parallel_workers", 2)
+        maintenance_work_mem = config.get("maintenance_work_mem")
 
-        num_vectors = dataset.get("num", 0)
-        dim = dataset.get("dim", 0)
-        if num_vectors and dim:
-            est_bytes = self.estimate_hnsw_graph_memory(num_vectors, dim, m)
-            est_gb = est_bytes / (1024 ** 3)
-            est_mwm = f"{int(est_gb + 1)}GB"
-            est_idx_bytes = self.estimate_hnsw_index_size(num_vectors, dim, m)
-            est_idx_gb = est_idx_bytes / (1024 ** 3)
-            print(f"Estimated HNSW graph memory: {est_gb:.1f} GB "
-                  f"(recommended maintenance_work_mem >= '{est_mwm}')")
-            print(f"Estimated on-disk index size: {est_idx_gb:.1f} GB "
-                  f"(recommended shared_buffers >= '{int(est_idx_gb + 1)}GB' for query serving)")
+        # HNSW-only: print build memory / on-disk size estimates, and
+        # record the resolved `lists` so the report can reference it.
+        if self.spec.index_type == "hnsw":
+            num_vectors = dataset.get("num", 0)
+            dim = dataset.get("dim", 0)
+            m = config["m"]
+            if num_vectors and dim:
+                est_bytes = _estimate_hnsw_graph_memory(num_vectors, dim, m)
+                est_gb = est_bytes / (1024 ** 3)
+                est_mwm = f"{int(est_gb + 1)}GB"
+                est_idx_bytes = _estimate_hnsw_index_size(num_vectors, dim, m)
+                est_idx_gb = est_idx_bytes / (1024 ** 3)
+                print(f"Estimated HNSW graph memory: {est_gb:.1f} GB "
+                      f"(recommended maintenance_work_mem >= '{est_mwm}')")
+                print(f"Estimated on-disk index size: {est_idx_gb:.1f} GB "
+                      f"(recommended shared_buffers >= '{int(est_idx_gb + 1)}GB' for query serving)")
+        else:
+            self.results[suite_name]["lists"] = _ivfflat_resolve_lists(
+                config, dataset
+            )
 
         if self.debug:
-            print(f"\n🔧 Index Configuration (HNSW):")
-            print(f"    • M:               {m}")
-            print(f"    • EF Construction: {ef_construction}")
-            print(f"    • Metric Function: {metric_func}")
-            print()
+            self.spec.debug_print(config, dataset)
 
         conn = self.create_connection()
         start_time = time.perf_counter()
 
+        if maintenance_work_mem:
+            conn.execute(f"SET maintenance_work_mem TO '{maintenance_work_mem}'")
         conn.execute(f"SET max_parallel_maintenance_workers TO {pg_parallel_workers}")
         conn.execute(f"SET max_parallel_workers TO {pg_parallel_workers}")
-        conn.execute(
-            f"CREATE INDEX {table_name}_embedding_idx ON {table_name} "
-            f"USING hnsw (embedding {metric_func}) WITH (m = {m}, ef_construction = {ef_construction})"
-        )
+        conn.execute(self.spec.create_index_sql(table_name, config, dataset))
 
         build_time = int(round(time.perf_counter() - start_time))
         self.results[suite_name]["index_build_time"] = build_time
@@ -269,29 +533,18 @@ class TestSuite(common.TestSuite):
         conn.close()
         print("Index built successfully.")
 
-    def sequential_bench(
-        self,
-        name: str,
-        table_name: str,
-        conn: psycopg.Connection,
-        metric: str,
-        top: int,
-        benchmark: dict,
-        dataset: dict,
-    ) -> tuple[list[tuple[int, float]], str]:
-        """Run sequential benchmark queries."""
-        conn.execute(f"SET hnsw.ef_search={benchmark['efSearch']}")
-        conn.execute("SET enable_seqscan = off")
-
-        metric_ops = self._get_metric_operator(metric)
+    def sequential_bench(self, name, table_name, conn, metric, top, benchmark, dataset):
+        self.apply_session_guc(conn, benchmark)
+        metric_ops = _metric_op(metric)
 
         self.debug_log(
-            f"Benchmark config: ef_search={benchmark['efSearch']}, "
-            f"metric={metric}, metric_ops={metric_ops}"
+            f"Benchmark config: {benchmark}, metric={metric}, "
+            f"metric_ops={metric_ops}"
         )
 
         self.warmup_for_benchmark(
-            conn, table_name, dataset, metric_ops, top, name
+            conn, table_name, dataset, metric_ops, top, name,
+            benchmark=benchmark,
         )
 
         return super().sequential_bench(
@@ -307,15 +560,16 @@ class TestSuite(common.TestSuite):
         # Get monitoring data for each suite
         for suite_name in self.config:
             system_metrics, pg_stats, dashboard_path = self.get_monitoring_data(suite_name)
-
             results_manager.process_suite_results(
-                suite_type="pgvector",
+                suite_type=self.spec.suite_type,
                 config={suite_name: self.config[suite_name]},
                 results={suite_name: self.results.get(suite_name, {})},
                 query_clients=self.query_clients,
                 system_metrics=system_metrics,
                 pg_stats=pg_stats,
                 system_dashboard_path=dashboard_path,
+                config_columns=self.CONFIG_COLUMNS,
+                bench_columns=self.BENCH_PARAM_COLUMNS,
             )
 
 
@@ -324,7 +578,7 @@ def main():
     parser = build_arg_parse()
     args = parser.parse_args()
 
-    test_suite = TestSuite(
+    test_suite = PgvectorTestSuite(
         suite_file=args.suite,
         url=args.url,
         devices=args.devices,

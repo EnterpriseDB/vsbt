@@ -34,6 +34,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
+# Each TestSuite owns its column spec — see common.TestSuite.CONFIG_COLUMNS
+# and BENCH_PARAM_COLUMNS — and threads them through process_suite_results
+# below. ResultsManager renders whatever it's given; it does not know which
+# index types or extensions exist.
+
+
 def format_markdown_table(headers: list[str], rows: list[list[str]]) -> list[str]:
     """Format a markdown table with proper column alignment."""
     num_cols = len(headers)
@@ -159,8 +165,11 @@ class ResultsManager:
             "ef_search": benchmark_config.get("efSearch", "N/A"),
             "lists": str(config.get("lists", results.get("lists", "N/A"))),
             "sampling_factor": config.get("samplingFactor", "N/A"),
-            "nprob": benchmark_config.get("nprob", "N/A"),
+            "nprob": benchmark_config.get("nprob", benchmark_config.get("probes", "N/A")),
             "epsilon": benchmark_config.get("epsilon", "N/A"),
+            "rerank_limit_amplify_factor": benchmark_config.get(
+                "rerank_limit_amplify_factor", "N/A"
+            ),
             "residual_quantization": config.get("residual_quantization", "N/A"),
             "build_threads": results.get("build_threads", "N/A"),
             "load_time_s": results.get("load_time", "N/A"),
@@ -345,6 +354,8 @@ class ResultsManager:
         run_data: dict,
         query_clients: int = 1,
         system_dashboard_path: Optional[Path] = None,
+        config_columns: Optional[list] = None,
+        bench_columns: Optional[list] = None,
     ) -> str:
         """Generate a full markdown report for a single run."""
         results = run_data.get("results", {})
@@ -393,23 +404,8 @@ class ResultsManager:
             ["Query Clients", str(query_clients)],
             ["Top-K", str(config.get("top", "N/A"))],
         ]
-
-        if suite_type == "pgvector":
-            config_rows.extend([
-                ["M", str(config.get("m", "N/A"))],
-                ["EF Construction", str(config.get("efConstruction", "N/A"))],
-            ])
-        elif suite_type in ("vectorchord", "pgpu"):
-            config_rows.extend([
-                ["Lists", str(config.get("lists", results.get("lists", "N/A")))],
-                ["Sampling Factor", str(config.get("samplingFactor", "N/A"))],
-                ["Residual Quantization", str(config.get("residual_quantization", "N/A"))],
-            ])
-            if suite_type == "vectorchord":
-                config_rows.extend([
-                    ["Build Threads", str(results.get("build_threads", "N/A"))],
-                    ["K-means Hierarchical", str(config.get("kmeans_hierarchical", "N/A"))],
-                ])
+        for label, extractor in (config_columns or []):
+            config_rows.append([label, extractor(config, results)])
 
         lines.extend(format_markdown_table(["Parameter", "Value"], config_rows))
 
@@ -430,36 +426,25 @@ class ResultsManager:
 
         # --- Benchmark Results ---
         benchmarks = config.get("benchmarks", {})
+        bench_cols = bench_columns or []
+        bench_headers = [h for _, h in bench_cols] + ["Recall", "QPS", "P50 (ms)", "P99 (ms)"]
         bench_rows = []
         for bench_name, bench_config in benchmarks.items():
             if bench_name in results and isinstance(results[bench_name], dict) and "recall" in results[bench_name]:
                 br = results[bench_name]
-                if suite_type == "pgvector":
-                    bench_rows.append([
-                        str(bench_config.get("efSearch", "N/A")),
+                bench_rows.append(
+                    [str(bench_config.get(key, "N/A")) for key, _ in bench_cols]
+                    + [
                         f"{br['recall']:.4f}",
                         f"{br['qps']:.2f}",
                         f"{br['p50_latency']:.2f}",
                         f"{br['p99_latency']:.2f}",
-                    ])
-                else:
-                    bench_rows.append([
-                        str(bench_config.get("nprob", "N/A")),
-                        str(bench_config.get("epsilon", "N/A")),
-                        f"{br['recall']:.4f}",
-                        f"{br['qps']:.2f}",
-                        f"{br['p50_latency']:.2f}",
-                        f"{br['p99_latency']:.2f}",
-                    ])
+                    ]
+                )
 
         if bench_rows:
             lines.extend(["", "---", "", "## Benchmark Results", ""])
-            if suite_type == "pgvector":
-                lines.extend(format_markdown_table(
-                    ["EF Search", "Recall", "QPS", "P50 (ms)", "P99 (ms)"], bench_rows))
-            else:
-                lines.extend(format_markdown_table(
-                    ["nprob", "epsilon", "Recall", "QPS", "P50 (ms)", "P99 (ms)"], bench_rows))
+            lines.extend(format_markdown_table(bench_headers, bench_rows))
         elif not benchmarks:
             lines.extend(["", "", "*No benchmark results (build-only mode)*", ""])
 
@@ -490,6 +475,7 @@ class ResultsManager:
         system_metrics: Optional[str] = None,
         pg_stats: Optional[str] = None,
         system_dashboard_path: Optional[Path] = None,
+        bench_columns: Optional[list] = None,
     ) -> Path:
         """
         Generate an aggregated markdown report that includes all runs for this test.
@@ -560,6 +546,14 @@ class ResultsManager:
         # --- Benchmark Results (unified table across all runs, ordered by timestamp) ---
         lines.extend(["", "---", "", "## Benchmark Results", ""])
 
+        bench_cols = bench_columns or []
+        param_headers = [h for _, h in bench_cols]
+        bench_headers = (
+            ["Date", "shared_buffers", "Clients"]
+            + param_headers
+            + ["Recall", "QPS", "P50 (ms)", "P99 (ms)"]
+        )
+
         bench_rows = []
         for run_data in all_runs:
             r = run_data.get("results", {})
@@ -569,48 +563,25 @@ class ResultsManager:
             run_date = self._run_date_str(run_id)
 
             sb = r.get("shared_buffers", "N/A")
-            mwm = r.get("maintenance_work_mem", "N/A")
             qc = r.get("query_clients", 1)
 
             benchmarks = c.get("benchmarks", {})
             for bench_name, bench_config in benchmarks.items():
                 if bench_name in r and isinstance(r[bench_name], dict) and "recall" in r[bench_name]:
                     br = r[bench_name]
-                    if suite_type == "pgvector":
-                        bench_rows.append([
-                            run_date,
-                            sb,
-                            str(qc),
-                            str(bench_config.get("efSearch", "N/A")),
+                    bench_rows.append(
+                        [run_date, sb, str(qc)]
+                        + [str(bench_config.get(key, "N/A")) for key, _ in bench_cols]
+                        + [
                             f"{br['recall']:.4f}",
                             f"{br['qps']:.2f}",
                             f"{br['p50_latency']:.2f}",
                             f"{br['p99_latency']:.2f}",
-                        ])
-                    else:
-                        bench_rows.append([
-                            run_date,
-                            sb,
-                            str(qc),
-                            str(bench_config.get("nprob", "N/A")),
-                            str(bench_config.get("epsilon", "N/A")),
-                            f"{br['recall']:.4f}",
-                            f"{br['qps']:.2f}",
-                            f"{br['p50_latency']:.2f}",
-                            f"{br['p99_latency']:.2f}",
-                        ])
+                        ]
+                    )
 
         if bench_rows:
-            if suite_type == "pgvector":
-                lines.extend(format_markdown_table(
-                    ["Date", "shared_buffers", "Clients",
-                     "EF Search", "Recall", "QPS", "P50 (ms)", "P99 (ms)"],
-                    bench_rows))
-            else:
-                lines.extend(format_markdown_table(
-                    ["Date", "shared_buffers", "Clients",
-                     "nprob", "epsilon", "Recall", "QPS", "P50 (ms)", "P99 (ms)"],
-                    bench_rows))
+            lines.extend(format_markdown_table(bench_headers, bench_rows))
         else:
             lines.append("*No benchmark results recorded.*")
 
@@ -655,6 +626,8 @@ class ResultsManager:
         system_metrics: Optional[str] = None,
         pg_stats: Optional[str] = None,
         system_dashboard_path: Optional[Path] = None,
+        config_columns: Optional[list] = None,
+        bench_columns: Optional[list] = None,
     ):
         """
         Process and save all results for a benchmark suite.
@@ -702,6 +675,7 @@ class ResultsManager:
             }
             run_report = self._generate_run_report(
                 test_name, suite_type, run_data, query_clients, system_dashboard_path,
+                config_columns=config_columns, bench_columns=bench_columns,
             )
             run_report_path = self._run_dir(test_name) / "report.md"
             with open(run_report_path, "w") as f:
@@ -717,6 +691,7 @@ class ResultsManager:
                 system_metrics=system_metrics,
                 pg_stats=pg_stats,
                 system_dashboard_path=system_dashboard_path,
+                bench_columns=bench_columns,
             )
 
         print(f"\n Results available in {self.base_dir}/")
