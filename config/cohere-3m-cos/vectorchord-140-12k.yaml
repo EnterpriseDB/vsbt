@@ -14,9 +14,21 @@ vc-cohere-3m-140-12k:
   pg_parallel_workers: 32
   top: 10
   benchmarks:
-    18-60-1.9:   { nprob: 18,60,   epsilon: 1.9 }
-    25-85-1.9:   { nprob: 25,85,   epsilon: 1.9 }
-    35-120-1.9:  { nprob: 35,120,  epsilon: 1.9 }
-    50-170-1.9:  { nprob: 50,170,  epsilon: 1.9 }
-    70-230-1.9:  { nprob: 70,230,  epsilon: 1.9 }
-    90-300-1.9:  { nprob: 90,300,  epsilon: 1.9 }
+    18-60-1.9:
+      nprob: 18,60
+      epsilon: 1.9
+    25-85-1.9:
+      nprob: 25,85
+      epsilon: 1.9
+    35-120-1.9:
+      nprob: 35,120
+      epsilon: 1.9
+    50-170-1.9:
+      nprob: 50,170
+      epsilon: 1.9
+    70-230-1.9:
+      nprob: 70,230
+      epsilon: 1.9
+    90-300-1.9:
+      nprob: 90,300
+      epsilon: 1.9
