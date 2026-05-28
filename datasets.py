@@ -386,20 +386,25 @@ def _download_parquet_from_s3(s3_prefix, base_dir, num):
 
     if shutil.which("aws"):
         print(f"Downloading dataset from {s3_prefix} ...")
-        subprocess.run(
-            ["aws", "s3", "sync", s3_prefix, base_dir,
-             "--exclude", "scalar_labels*",
-             "--exclude", "neighbors_*"],
-            check=True,
-        )
+        try:
+            subprocess.run(
+                ["aws", "s3", "sync", s3_prefix, base_dir,
+                 "--exclude", "scalar_labels*",
+                 "--exclude", "neighbors_*"],
+                check=True,
+            )
+            return
+        except (subprocess.CalledProcessError, OSError) as e:
+            print(f"Warning: aws s3 sync failed ({e}), falling back to HTTP...")
     else:
         print(f"Warning: aws CLI not found, downloading via HTTP (install aws CLI for faster parallel downloads)...")
-        for filename in _expected_parquet_files(num):
-            dest = os.path.join(base_dir, filename)
-            if os.path.exists(dest):
-                continue
-            url = _s3_prefix_to_http_url(s3_prefix, filename)
-            download_http_file(url, dest)
+
+    for filename in _expected_parquet_files(num):
+        dest = os.path.join(base_dir, filename)
+        if os.path.exists(dest):
+            continue
+        url = _s3_prefix_to_http_url(s3_prefix, filename)
+        download_http_file(url, dest)
 
 
 def _load_parquet(name, info):
