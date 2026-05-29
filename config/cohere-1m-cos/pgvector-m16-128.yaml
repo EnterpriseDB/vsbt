@@ -1,0 +1,14 @@
+pgvector-cohere-1m-m16-128:
+  dataset: cohere-1m-cos
+  datasetType: parquet
+  pg_parallel_workers: 32
+  metric: cos
+  m: 16
+  efConstruction: 128
+  top: 10
+  benchmarks:
+    "40":  { efSearch: 40 }
+    "80":  { efSearch: 80 }
+    "120": { efSearch: 120 }
+    "200": { efSearch: 200 }
+    "400": { efSearch: 400 }

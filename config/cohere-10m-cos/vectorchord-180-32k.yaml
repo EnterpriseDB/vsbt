@@ -1,0 +1,34 @@
+vc-cohere-10m-180-32k:
+  dataset: cohere-10m-cos
+  datasetType: parquet
+  metric: cos
+  samplingFactor: 256
+  lists: [180, 32768]
+  build_threads: 32
+  residual_quantization: true
+  kmeans_hierarchical: true
+  # NOTE: rerank_in_table is NOT VectorChord's recommended default — it trades
+  # query latency for a smaller index. Enabled here for testing only.
+  # See https://docs.vectorchord.ai/vectorchord/usage/rerank-in-table.html
+  rerank_in_table: true
+  pg_parallel_workers: 32
+  top: 10
+  benchmarks:
+    20-40-1.9:
+      nprob: 20,40
+      epsilon: 1.9
+    38-76-1.9:
+      nprob: 38,76
+      epsilon: 1.9
+    50-100-1.9:
+      nprob: 50,100
+      epsilon: 1.9
+    65-130-1.9:
+      nprob: 65,130
+      epsilon: 1.9
+    80-160-1.9:
+      nprob: 80,160
+      epsilon: 1.9
+    100-200-1.9:
+      nprob: 100,200
+      epsilon: 1.9

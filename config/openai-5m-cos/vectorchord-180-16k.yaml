@@ -1,0 +1,34 @@
+vc-openai-5m-180-16k:
+  dataset: openai-5m-cos
+  datasetType: parquet
+  metric: cos
+  samplingFactor: 256
+  lists: [180, 16384]
+  build_threads: 32
+  residual_quantization: true
+  kmeans_hierarchical: true
+  # NOTE: rerank_in_table is NOT VectorChord's recommended default — it trades
+  # query latency for a smaller index. Enabled here for testing only.
+  # See https://docs.vectorchord.ai/vectorchord/usage/rerank-in-table.html
+  rerank_in_table: true
+  pg_parallel_workers: 32
+  top: 10
+  benchmarks:
+    20-65-1.9:
+      nprob: 20,65
+      epsilon: 1.9
+    30-100-1.9:
+      nprob: 30,100
+      epsilon: 1.9
+    44-150-1.9:
+      nprob: 44,150
+      epsilon: 1.9
+    60-200-1.9:
+      nprob: 60,200
+      epsilon: 1.9
+    80-260-1.9:
+      nprob: 80,260
+      epsilon: 1.9
+    100-330-1.9:
+      nprob: 100,330
+      epsilon: 1.9
