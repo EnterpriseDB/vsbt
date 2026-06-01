@@ -186,9 +186,7 @@ def _bq_rerank_query_template(table_name, dataset, metric_ops, top, benchmark):
 
 
 def _bq_rerank_session_gucs(benchmark):
-    # No `enable_seqscan = off`: in two-stage rerank a seq scan over a
-    # tiny candidate set is expected and harmless.
-    return [f"SET ivfflat.probes TO {benchmark['probes']}"]
+    return _ivfflat_session_gucs(benchmark)
 
 
 def _bq_rerank_create_index_sql(table_name, config, dataset):
