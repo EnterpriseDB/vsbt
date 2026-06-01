@@ -39,6 +39,10 @@ _METRIC_FUNCS = {
     "cos": "vector_cosine_ops",
     "ip": "vector_ip_ops", "dot": "vector_ip_ops",
 }
+# Hamming distance on a sign-bit binary quantization preserves the
+# cosine/angular ordering of the original vectors, but not the L2 or raw
+# inner-product ordering — so BQ + rerank only makes sense for cos/angular.
+_BQ_RERANK_METRICS = {"cos", "angular"}
 
 
 def _metric_op(metric: str) -> str:
@@ -93,9 +97,23 @@ class IndexSpec:
 
 def _ivfflat_resolve_lists(config: dict, dataset: dict) -> int:
     lists = config["lists"]
-    if lists == "auto":
-        lists = max(1, int(math.sqrt(dataset["num"])))
+    if isinstance(lists, str) and lists.strip().lower() == "auto":
+        return max(1, int(math.sqrt(dataset["num"])))
+    if not isinstance(lists, int) or lists < 1:
+        raise ValueError(
+            f"lists must be a positive integer or 'auto'; got {lists!r}"
+        )
     return lists
+
+
+def _resolve_rerank_amp(benchmark: dict) -> int:
+    rerank_amp = benchmark.get("rerank_limit_amplify_factor", DEFAULT_RERANK_AMP)
+    if not isinstance(rerank_amp, int) or rerank_amp < 1:
+        raise ValueError(
+            f"rerank_limit_amplify_factor must be a positive integer; "
+            f"got {rerank_amp!r}"
+        )
+    return rerank_amp
 
 
 def _hnsw_query_template(table_name, _dataset, metric_ops, top, _benchmark):
@@ -177,10 +195,7 @@ def _bq_rerank_two_stage_sql(table_name, dim, rerank_op, top):
 
 def _bq_rerank_query_template(table_name, dataset, metric_ops, top, benchmark):
     dim = dataset["dim"]
-    rerank_amp = (benchmark or {}).get(
-        "rerank_limit_amplify_factor", DEFAULT_RERANK_AMP
-    )
-    rerank_limit = top * rerank_amp
+    rerank_limit = top * _resolve_rerank_amp(benchmark)
     sql_text = _bq_rerank_two_stage_sql(table_name, dim, metric_ops, top)
     return sql_text, (lambda q: (q, rerank_limit, q))
 
@@ -190,6 +205,13 @@ def _bq_rerank_session_gucs(benchmark):
 
 
 def _bq_rerank_create_index_sql(table_name, config, dataset):
+    metric = dataset["metric"]
+    if metric not in _BQ_RERANK_METRICS:
+        raise ValueError(
+            f"ivfflat_bq_rerank only supports cosine/angular metrics "
+            f"(Hamming on binary_quantize preserves only cosine ordering); "
+            f"got metric={metric!r}"
+        )
     lists = _ivfflat_resolve_lists(config, dataset)
     dim = dataset["dim"]
     return (
@@ -442,10 +464,7 @@ class PgvectorTestSuite(common.TestSuite):
         )
         rerank_limit = 0
         if self.spec.bind_kind == "two_stage":
-            rerank_amp = benchmark.get(
-                "rerank_limit_amplify_factor", DEFAULT_RERANK_AMP
-            )
-            rerank_limit = top * rerank_amp
+            rerank_limit = top * _resolve_rerank_amp(benchmark)
         return (
             test,
             answer,
@@ -475,7 +494,7 @@ class PgvectorTestSuite(common.TestSuite):
         )
 
         config = self.config[suite_name]
-        pg_parallel_workers = config.get("pg_parallel_workers", 2)
+        pg_parallel_workers = config["pg_parallel_workers"]
         maintenance_work_mem = config.get("maintenance_work_mem")
 
         # HNSW-only: print build memory / on-disk size estimates, and
