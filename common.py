@@ -308,9 +308,9 @@ class TestSuite:
         )
         return conn
 
-    def make_batch_args(self, test, answer, top, metric, table_name, benchmark,
+    def make_batch_args(self, dataset, top, metric, table_name, benchmark,
                         warmup_n=0):
-        return test, answer, top, metric, table_name, warmup_n
+        return dataset["test"], dataset["answer"], top, metric, table_name, warmup_n
 
     def apply_session_guc(self, conn, benchmark):
         """Apply per-benchmark session GUCs (probes/ef_search/etc).
@@ -846,9 +846,7 @@ class TestSuite:
         return results, metric_ops
 
     def parallel_bench(self, name, table_name, dataset, metric, top, query_clients, benchmark):
-        test = dataset["test"]
-        answer = dataset["answer"]
-        m = test.shape[0]
+        m = dataset["test"].shape[0]
         total_queries = m * query_clients
 
         # Single-client probe picks N, then every worker runs N warmup
@@ -873,7 +871,7 @@ class TestSuite:
         batches = []
         for _ in range(query_clients):
             batch = self.make_batch_args(
-                test, answer, top, metric, table_name, benchmark,
+                dataset, top, metric, table_name, benchmark,
                 warmup_n=warmup_n,
             )
             batches.append(batch)

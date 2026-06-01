@@ -452,22 +452,21 @@ class PgvectorTestSuite(common.TestSuite):
         conn.close()
         return results
 
-    def make_batch_args(self, test, answer, top, metric, table_name, benchmark,
+    def make_batch_args(self, dataset, top, metric, table_name, benchmark,
                         warmup_n=0):
         metric_ops = _metric_op(metric)
         # warmup_query is the canonical (sql, bind_fn) source. We discard
         # bind_fn here because it can't be pickled and reconstruct it in
         # the worker from bind_kind + rerank_limit.
         query_sql, _bind_fn = self.warmup_query(
-            table_name, {"dim": test.shape[1], "metric": metric}, metric_ops,
-            top, benchmark,
+            table_name, dataset, metric_ops, top, benchmark,
         )
         rerank_limit = 0
         if self.spec.bind_kind == "two_stage":
             rerank_limit = top * _resolve_rerank_amp(benchmark)
         return (
-            test,
-            answer,
+            dataset["test"],
+            dataset["answer"],
             top,
             query_sql,
             self.spec.bind_kind,

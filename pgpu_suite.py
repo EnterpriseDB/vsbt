@@ -85,13 +85,13 @@ class TestSuite(common.TestSuite):
         conn.close()
         return results
 
-    def make_batch_args(self, test, answer, top, metric, table_name, benchmark,
+    def make_batch_args(self, dataset, top, metric, table_name, benchmark,
                         warmup_n=0):
         """Prepare arguments for parallel batch processing."""
         metric_ops = self._get_metric_operator(metric)
         return (
-            test,
-            answer,
+            dataset["test"],
+            dataset["answer"],
             top,
             metric_ops,
             self.url,
