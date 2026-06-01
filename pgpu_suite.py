@@ -174,9 +174,9 @@ class TestSuite(common.TestSuite):
 
         return handler
 
-    def create_index(self, suite_name: str, table_name: str, dataset: dict = None):
+    def create_index(self, suite_name: str, table_name: str, dataset: dict) -> None:
         """Create a GPU-accelerated IVF index using PGPU."""
-        event, index_monitor_thread = super().create_index(
+        event, index_monitor_thread = self._begin_index_build(
             suite_name, table_name, dataset
         )
 

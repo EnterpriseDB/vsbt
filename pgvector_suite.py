@@ -15,7 +15,7 @@ import argparse
 import math
 import time
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Optional
 
 import psycopg
 import pgvector.psycopg
@@ -98,12 +98,12 @@ def _ivfflat_resolve_lists(config: dict, dataset: dict) -> int:
     return lists
 
 
-def _hnsw_query_template(table_name, dataset, metric_ops, top, benchmark):
-    sql = (
+def _hnsw_query_template(table_name, _dataset, metric_ops, top, _benchmark):
+    sql_text = (
         f"SELECT id FROM {table_name} ORDER BY embedding {metric_ops} %s "
         f"LIMIT {top}"
     )
-    return sql, (lambda q: (q,))
+    return sql_text, (lambda q: (q,))
 
 
 def _hnsw_session_gucs(benchmark):
@@ -130,12 +130,12 @@ def _hnsw_debug_print(config, dataset):
     print()
 
 
-def _ivfflat_query_template(table_name, dataset, metric_ops, top, benchmark):
-    sql = (
+def _ivfflat_query_template(table_name, _dataset, metric_ops, top, _benchmark):
+    sql_text = (
         f"SELECT id FROM {table_name} ORDER BY embedding {metric_ops} %s "
         f"LIMIT {top}"
     )
-    return sql, (lambda q: (q,))
+    return sql_text, (lambda q: (q,))
 
 
 def _ivfflat_session_gucs(benchmark):
@@ -181,8 +181,8 @@ def _bq_rerank_query_template(table_name, dataset, metric_ops, top, benchmark):
         "rerank_limit_amplify_factor", DEFAULT_RERANK_AMP
     )
     rerank_limit = top * rerank_amp
-    sql = _bq_rerank_two_stage_sql(table_name, dim, metric_ops, top)
-    return sql, (lambda q: (q, rerank_limit, q))
+    sql_text = _bq_rerank_two_stage_sql(table_name, dim, metric_ops, top)
+    return sql_text, (lambda q: (q, rerank_limit, q))
 
 
 def _bq_rerank_session_gucs(benchmark):
@@ -342,14 +342,8 @@ class PgvectorTestSuite(common.TestSuite):
                 f"expected one of {sorted(INDEX_SPECS)}"
             )
         self.spec = INDEX_SPECS[index_type]
-
-    @property
-    def BENCH_PARAM_COLUMNS(self):
-        return self.spec.bench_param_columns
-
-    @property
-    def CONFIG_COLUMNS(self):
-        return self.spec.config_columns
+        self.BENCH_PARAM_COLUMNS = list(self.spec.bench_param_columns)
+        self.CONFIG_COLUMNS = list(self.spec.config_columns)
 
     def create_connection(self):
         """Create a database connection with pgvector support."""
@@ -357,7 +351,7 @@ class PgvectorTestSuite(common.TestSuite):
         pgvector.psycopg.register_vector(conn)
         return conn
 
-    def init_ext(self, suite_name: str = None):
+    def init_ext(self, suite_name: Optional[str] = None):
         """Initialize required PostgreSQL extensions."""
         conn = super().create_connection()
         conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
@@ -407,11 +401,9 @@ class PgvectorTestSuite(common.TestSuite):
         cursor = conn.cursor()
 
         if bind_kind == "two_stage":
-            def bind(q):
-                return (q, rerank_limit, q)
+            bind = lambda q: (q, rerank_limit, q)
         else:
-            def bind(q):
-                return (q,)
+            bind = lambda q: (q,)
 
         if warmup_n:
             n_test = len(test)
@@ -444,7 +436,7 @@ class PgvectorTestSuite(common.TestSuite):
         # warmup_query is the canonical (sql, bind_fn) source. We discard
         # bind_fn here because it can't be pickled and reconstruct it in
         # the worker from bind_kind + rerank_limit.
-        sql, _bind_fn = self.warmup_query(
+        query_sql, _bind_fn = self.warmup_query(
             table_name, {"dim": test.shape[1], "metric": metric}, metric_ops,
             top, benchmark,
         )
@@ -458,7 +450,7 @@ class PgvectorTestSuite(common.TestSuite):
             test,
             answer,
             top,
-            sql,
+            query_sql,
             self.spec.bind_kind,
             rerank_limit,
             self.spec.session_gucs(benchmark),
@@ -475,10 +467,10 @@ class PgvectorTestSuite(common.TestSuite):
             table_name, dataset, metric_ops, top, benchmark
         )
 
-    def create_index(self, suite_name: str, table_name: str, dataset: dict):
+    def create_index(self, suite_name: str, table_name: str, dataset: dict) -> None:
         """Create the pgvector index for this suite's IndexSpec
         (HNSW, IVFFlat, or IVFFlat-BQ-Rerank)."""
-        event, index_monitor_thread = super().create_index(
+        event, index_monitor_thread = self._begin_index_build(
             suite_name, table_name, dataset
         )
 

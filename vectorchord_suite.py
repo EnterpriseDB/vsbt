@@ -195,9 +195,9 @@ class TestSuite(common.TestSuite):
 
         return int((vector_bytes + frozen_bytes + centroid_bytes) * 1.05)
 
-    def create_index(self, suite_name: str, table_name: str, dataset: dict):
+    def create_index(self, suite_name: str, table_name: str, dataset: dict) -> None:
         """Create an IVF index using VectorChord."""
-        event, index_monitor_thread = super().create_index(
+        event, index_monitor_thread = self._begin_index_build(
             suite_name, table_name, dataset
         )
 

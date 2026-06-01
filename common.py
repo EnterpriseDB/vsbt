@@ -308,9 +308,9 @@ class TestSuite:
         )
         return conn
 
-    def make_batch_args(self, test, answer, top, metric_ops, table_name, benchmark,
+    def make_batch_args(self, test, answer, top, metric, table_name, benchmark,
                         warmup_n=0):
-        return test, answer, top, metric_ops, table_name, warmup_n
+        return test, answer, top, metric, table_name, warmup_n
 
     def apply_session_guc(self, conn, benchmark):
         """Apply per-benchmark session GUCs (probes/ef_search/etc).
@@ -711,8 +711,13 @@ class TestSuite:
     def index_name(self, table_name: str) -> str:
         return f"{table_name}_embedding_idx"
 
-    def create_index(self, suite_name: str, table_name: str, dataset: dict) -> tuple[
+    def _begin_index_build(self, suite_name: str, table_name: str, dataset: dict) -> tuple[
         threading.Event, threading.Thread]:
+        """Setup steps shared by every suite's create_index: drop any
+        existing index, configure parallel workers, and start the
+        monitor thread. Subclasses call this from their own
+        create_index, run the actual CREATE INDEX statement, then
+        event.set() + thread.join() to stop the monitor."""
         os.makedirs(f"./results/{suite_name}/index_build", exist_ok=True)
         conn = self.create_connection()
         idx_name = self.index_name(table_name)
@@ -744,6 +749,11 @@ class TestSuite:
 
         return event, index_monitor_thread
 
+    def create_index(self, suite_name: str, table_name: str, dataset: dict) -> None:
+        raise NotImplementedError(
+            "create_index must be implemented by a suite subclass."
+        )
+
     def calculate_index_size(self, suite_name: str, table_name: str):
         conn = self.create_connection()
         idx_name = self.index_name(table_name)
@@ -756,8 +766,12 @@ class TestSuite:
             self.results[suite_name]["index_size"] = result[0]
         conn.close()
 
-    def sequential_bench(self, name: str, table_name: str, conn: psycopg.Connection, metric_ops: str, top: int,
+    def sequential_bench(self, name: str, table_name: str, conn: psycopg.Connection, metric: str, top: int,
                          benchmark: dict, dataset: dict) -> tuple[list[tuple[int, float]], str]:
+        # `metric` here may be either a metric name ("l2") when invoked
+        # from the base path, or a metric operator ("<->") when a subclass
+        # override has already converted it before delegating via super().
+        metric_ops = metric
         m = dataset["test"].shape[0]
         conn.execute("SET jit=false")
 
@@ -1023,8 +1037,8 @@ class TestSuite:
 
         self.print_summary_table(suite_name)
 
-    def generate_markdown_result(self):
-        return NotImplementedError("generate_markdown_result method should be implemented in subclasses.")
+    def generate_markdown_result(self) -> None:
+        raise NotImplementedError("generate_markdown_result method should be implemented in subclasses.")
 
     def run_suite(self, name: str):
         os.makedirs(f"./results/{name}", exist_ok=True)
