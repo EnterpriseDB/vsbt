@@ -30,19 +30,6 @@ class TestSuite(common.TestSuite):
     residual quantization for approximate nearest neighbor searches.
     """
 
-    BENCH_PARAM_COLUMNS = [
-        ("nprob",   "Probes"),
-        ("epsilon", "Epsilon"),
-    ]
-
-    CONFIG_COLUMNS = [
-        ("Lists",                 lambda c, r: str(c.get("lists", r.get("lists", "N/A")))),
-        ("Sampling Factor",       lambda c, r: str(c.get("samplingFactor", "N/A"))),
-        ("Residual Quantization", lambda c, r: str(c.get("residual_quantization", "N/A"))),
-        ("Build Threads",         lambda c, r: str(r.get("build_threads", "N/A"))),
-        ("K-means Hierarchical",  lambda c, r: str(c.get("kmeans_hierarchical", "N/A"))),
-    ]
-
     METRIC_OPS = {
         "l2": "vector_l2_ops",
         "euclidean": "vector_l2_ops",
@@ -90,13 +77,13 @@ class TestSuite(common.TestSuite):
         conn.close()
         return results
 
-    def make_batch_args(self, dataset, top, metric, table_name, benchmark,
+    def make_batch_args(self, test, answer, top, metric, table_name, benchmark,
                         warmup_n=0):
         """Prepare arguments for parallel batch processing."""
         metric_ops = self._get_metric_operator(metric)
         return (
-            dataset["test"],
-            dataset["answer"],
+            test,
+            answer,
             top,
             metric_ops,
             self.url,
@@ -195,9 +182,9 @@ class TestSuite(common.TestSuite):
 
         return int((vector_bytes + frozen_bytes + centroid_bytes) * 1.05)
 
-    def create_index(self, suite_name: str, table_name: str, dataset: dict) -> None:
+    def create_index(self, suite_name: str, table_name: str, dataset: dict):
         """Create an IVF index using VectorChord."""
-        event, index_monitor_thread = self._begin_index_build(
+        event, index_monitor_thread = super().create_index(
             suite_name, table_name, dataset
         )
 
@@ -360,8 +347,6 @@ class TestSuite(common.TestSuite):
                 system_metrics=system_metrics,
                 pg_stats=pg_stats,
                 system_dashboard_path=dashboard_path,
-                config_columns=self.CONFIG_COLUMNS,
-                bench_columns=self.BENCH_PARAM_COLUMNS,
             )
 
 

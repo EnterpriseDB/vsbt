@@ -4,7 +4,7 @@ pgvector Benchmark Suite
 Benchmarks vector search using the pgvector extension with HNSW or
 IVFFlat indexes (vanilla and BQ + rerank variants) for PostgreSQL.
 
-A single PgvectorTestSuite handles all three index types. The per-index
+A single TestSuite handles all three index types. The per-index
 variation lives in INDEX_SPECS — small functions that build the CREATE
 INDEX statement, the per-benchmark session GUCs, and the per-benchmark
 query template. Everything else (warmup, sequential / parallel
@@ -59,21 +59,23 @@ def _metric_func(metric: str) -> str:
 
 @dataclass(frozen=True)
 class IndexSpec:
-    """Per-index-type variation. A PgvectorTestSuite holds one of these."""
+    """Per-index-type variation. A TestSuite holds one of these."""
 
-    # YAML `indexType` value. Also passed through as `suite_type` to
-    # ResultsManager so the markdown/csv layer renders the right columns.
     index_type: str
+    # Passed through as `suite_type` to ResultsManager so the
+    # markdown/csv layer renders the right columns. HNSW uses upstream's
+    # "pgvector"; new index types use distinct values that route through
+    # the additive branches in results.py.
     suite_type: str
 
     # Builds the per-benchmark query: returns (sql_template, bind_fn).
     # Used by both the warmup loop and sequential_bench measurement loop.
     query_template: Callable[[str, dict, str, int, dict], tuple[str, Callable]]
 
-    # `(query, rerank_limit, query)` for two-stage queries, `(query,)` for
-    # single-stage. Held separately because process_batch runs in a
-    # multiprocessing worker where lambdas can't cross the pickle boundary.
-    bind_kind: str   # "single" or "two_stage"
+    # "single" -> bind is `(query,)`; "two_stage" -> `(query, rerank_limit, query)`.
+    # Held separately because process_batch runs in a multiprocessing worker
+    # where lambdas can't cross the pickle boundary.
+    bind_kind: str
 
     # Per-benchmark session GUCs (`SET ...` statements as full SQL strings).
     session_gucs: Callable[[dict], list[str]]
@@ -81,17 +83,17 @@ class IndexSpec:
     # `CREATE INDEX ...` statement.
     create_index_sql: Callable[[str, dict, dict], str]
 
-    # Optional debug print invoked from create_index after `lists` resolution.
+    # Optional debug print invoked from create_index.
     debug_print: Callable[[dict, dict], None]
 
-    # (benchmark-dict key, column header) pairs for the summary table —
-    # consumed by common.TestSuite.print_summary_table via
-    # PgvectorTestSuite.BENCH_PARAM_COLUMNS.
+    # (benchmark-dict key, column header) pairs for the new generic
+    # summary path. Empty for HNSW so it falls through to upstream's
+    # legacy efSearch branch in print_summary_table and results.py.
     bench_param_columns: tuple[tuple[str, str], ...]
 
     # (label, extractor(config, results) -> str) rows for the per-run
-    # markdown "Configuration" table — consumed via
-    # PgvectorTestSuite.CONFIG_COLUMNS.
+    # markdown "Configuration" table. Empty for HNSW (handled by the
+    # legacy "pgvector" branch in results.py).
     config_columns: tuple
 
 
@@ -229,11 +231,6 @@ def _bq_rerank_debug_print(config, dataset):
     print()
 
 
-_HNSW_CONFIG_COLUMNS = (
-    ("M",               lambda c, r: str(c.get("m", "N/A"))),
-    ("EF Construction", lambda c, r: str(c.get("efConstruction", "N/A"))),
-)
-
 _IVFFLAT_CONFIG_COLUMNS = (
     ("Lists", lambda c, r: str(c.get("lists", r.get("lists", "N/A")))),
 )
@@ -248,12 +245,14 @@ INDEX_SPECS = {
         session_gucs=_hnsw_session_gucs,
         create_index_sql=_hnsw_create_index_sql,
         debug_print=_hnsw_debug_print,
-        bench_param_columns=(("efSearch", "EF Search"),),
-        config_columns=_HNSW_CONFIG_COLUMNS,
+        # Empty: HNSW falls through to upstream's legacy efSearch branch
+        # in print_summary_table and the "pgvector" branch in results.py.
+        bench_param_columns=(),
+        config_columns=(),
     ),
     "ivfflat": IndexSpec(
         index_type="ivfflat",
-        suite_type="ivfflat",
+        suite_type="pgvector-ivfflat",
         query_template=_ivfflat_query_template,
         bind_kind="single",
         session_gucs=_ivfflat_session_gucs,
@@ -264,7 +263,7 @@ INDEX_SPECS = {
     ),
     "ivfflat_bq_rerank": IndexSpec(
         index_type="ivfflat_bq_rerank",
-        suite_type="ivfflat_bq_rerank",
+        suite_type="pgvector-ivfflat-bq-rerank",
         query_template=_bq_rerank_query_template,
         bind_kind="two_stage",
         session_gucs=_bq_rerank_session_gucs,
@@ -279,9 +278,7 @@ INDEX_SPECS = {
 }
 
 
-# HNSW build memory / on-disk size estimators. Live next to the spec because
-# only HNSW currently uses them; called from create_index when the index
-# type is hnsw.
+# HNSW build memory / on-disk size estimators.
 def _maxalign(x):
     return (x + 7) & ~7
 
@@ -342,9 +339,10 @@ def build_arg_parse():
     return parser
 
 
-class PgvectorTestSuite(common.TestSuite):
+class TestSuite(common.TestSuite):
     """Single suite for HNSW / IVFFlat / IVFFlat-BQ-Rerank, dispatched by
-    the YAML `indexType` field via INDEX_SPECS."""
+    the YAML `indexType` field via INDEX_SPECS. The HNSW path produces
+    byte-identical SQL/GUCs/reports to upstream."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -364,8 +362,12 @@ class PgvectorTestSuite(common.TestSuite):
                 f"expected one of {sorted(INDEX_SPECS)}"
             )
         self.spec = INDEX_SPECS[index_type]
+        # Empty for HNSW; populated for IVFFlat variants. The base class
+        # uses these to switch summary-table rendering between the legacy
+        # efSearch path and the new generic path.
         self.BENCH_PARAM_COLUMNS = list(self.spec.bench_param_columns)
         self.CONFIG_COLUMNS = list(self.spec.config_columns)
+        self._batch_dataset = None
 
     def create_connection(self):
         """Create a database connection with pgvector support."""
@@ -409,9 +411,51 @@ class PgvectorTestSuite(common.TestSuite):
 
     @staticmethod
     def process_batch(args):
-        """Run a worker batch. The arg tuple is built by make_batch_args
-        and is fully serializable (no lambdas) so it crosses the
-        multiprocessing pickle boundary."""
+        """Run a worker batch. Dispatches on tuple length: HNSW uses the
+        upstream 8-tuple shape unchanged; IVFFlat / BQ-rerank use a
+        9-tuple that carries the SQL, bind kind, and per-benchmark GUCs."""
+        if len(args) == 8:
+            # HNSW path: upstream shape, byte-identical body.
+            test, answer, top, metric_ops, url, table_name, ef_search, warmup_n = args
+
+            conn = psycopg.connect(url)
+            pgvector.psycopg.register_vector(conn)
+            conn.execute(f"SET hnsw.ef_search={ef_search}")
+            conn.execute("SET enable_seqscan = off")
+
+            query_sql = (
+                f"SELECT id FROM {table_name} ORDER BY embedding {metric_ops} %s "
+                f"LIMIT {top}"
+            )
+
+            cursor = conn.cursor()
+
+            if warmup_n:
+                n_test = len(test)
+                for j in range(warmup_n):
+                    cursor.execute(query_sql, (test[j % n_test],))
+                    cursor.fetchall()
+
+            results = []
+            for query, ground_truth in zip(test, answer):
+                start = time.perf_counter()
+                cursor.execute(query_sql, (query,))
+                result = cursor.fetchall()
+                end = time.perf_counter()
+
+                result_ids = {p[0] for p in result[:top]}
+                gt_ids = ground_truth[:top]
+                ground_truth_ids = set(
+                    gt_ids.tolist() if hasattr(gt_ids, "tolist") else gt_ids
+                )
+                hit = len(result_ids & ground_truth_ids)
+                results.append((hit, (start, end)))
+
+            cursor.close()
+            conn.close()
+            return results
+
+        # IVFFlat / BQ-rerank dispatch tuple.
         (test, answer, top, query_sql, bind_kind, rerank_limit, gucs,
          url, warmup_n) = args
 
@@ -452,12 +496,40 @@ class PgvectorTestSuite(common.TestSuite):
         conn.close()
         return results
 
-    def make_batch_args(self, dataset, top, metric, table_name, benchmark,
+    def parallel_bench(self, name, table_name, dataset, metric, top,
+                        query_clients, benchmark):
+        # make_batch_args (called via super().parallel_bench → make_batch_args)
+        # only receives test/answer arrays, but BQ-rerank's query template
+        # needs `dim` from dataset. Stash here for make_batch_args to read.
+        self._batch_dataset = dataset
+        try:
+            return super().parallel_bench(
+                name, table_name, dataset, metric, top, query_clients, benchmark,
+            )
+        finally:
+            self._batch_dataset = None
+
+    def make_batch_args(self, test, answer, top, metric, table_name, benchmark,
                         warmup_n=0):
+        """Build the worker args tuple. HNSW path emits the upstream-shape
+        8-tuple; IVFFlat variants emit a 9-tuple with SQL + GUCs baked in."""
         metric_ops = _metric_op(metric)
-        # warmup_query is the canonical (sql, bind_fn) source. We discard
-        # bind_fn here because it can't be pickled and reconstruct it in
-        # the worker from bind_kind + rerank_limit.
+        if self.spec.index_type == "hnsw":
+            return (
+                test,
+                answer,
+                top,
+                metric_ops,
+                self.url,
+                table_name,
+                benchmark["efSearch"],
+                warmup_n,
+            )
+
+        # warmup_query is the canonical (sql, bind_fn) source. Discard
+        # bind_fn (lambda — not picklable) and rebuild it in the worker
+        # from bind_kind + rerank_limit.
+        dataset = self._batch_dataset
         query_sql, _bind_fn = self.warmup_query(
             table_name, dataset, metric_ops, top, benchmark,
         )
@@ -465,8 +537,8 @@ class PgvectorTestSuite(common.TestSuite):
         if self.spec.bind_kind == "two_stage":
             rerank_limit = top * _resolve_rerank_amp(benchmark)
         return (
-            dataset["test"],
-            dataset["answer"],
+            test,
+            answer,
             top,
             query_sql,
             self.spec.bind_kind,
@@ -488,7 +560,7 @@ class PgvectorTestSuite(common.TestSuite):
     def create_index(self, suite_name: str, table_name: str, dataset: dict) -> None:
         """Create the pgvector index for this suite's IndexSpec
         (HNSW, IVFFlat, or IVFFlat-BQ-Rerank)."""
-        event, index_monitor_thread = self._begin_index_build(
+        event, index_monitor_thread = super().create_index(
             suite_name, table_name, dataset
         )
 
@@ -496,8 +568,6 @@ class PgvectorTestSuite(common.TestSuite):
         pg_parallel_workers = config["pg_parallel_workers"]
         maintenance_work_mem = config.get("maintenance_work_mem")
 
-        # HNSW-only: print build memory / on-disk size estimates, and
-        # record the resolved `lists` so the report can reference it.
         if self.spec.index_type == "hnsw":
             num_vectors = dataset.get("num", 0)
             dim = dataset.get("dim", 0)
@@ -565,10 +635,9 @@ class PgvectorTestSuite(common.TestSuite):
 
         results_manager = ResultsManager()
 
-        # Get monitoring data for each suite
         for suite_name in self.config:
             system_metrics, pg_stats, dashboard_path = self.get_monitoring_data(suite_name)
-            results_manager.process_suite_results(
+            kwargs = dict(
                 suite_type=self.spec.suite_type,
                 config={suite_name: self.config[suite_name]},
                 results={suite_name: self.results.get(suite_name, {})},
@@ -576,9 +645,14 @@ class PgvectorTestSuite(common.TestSuite):
                 system_metrics=system_metrics,
                 pg_stats=pg_stats,
                 system_dashboard_path=dashboard_path,
-                config_columns=self.CONFIG_COLUMNS,
-                bench_columns=self.BENCH_PARAM_COLUMNS,
             )
+            # HNSW renders via the legacy "pgvector" branch in results.py
+            # and ignores the new column kwargs. IVFFlat variants take the
+            # new branch and consume them.
+            if self.spec.index_type != "hnsw":
+                kwargs["config_columns"] = self.CONFIG_COLUMNS
+                kwargs["bench_columns"] = self.BENCH_PARAM_COLUMNS
+            results_manager.process_suite_results(**kwargs)
 
 
 def main():
@@ -586,7 +660,7 @@ def main():
     parser = build_arg_parse()
     args = parser.parse_args()
 
-    test_suite = PgvectorTestSuite(
+    test_suite = TestSuite(
         suite_file=args.suite,
         url=args.url,
         devices=args.devices,

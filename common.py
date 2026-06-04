@@ -308,9 +308,9 @@ class TestSuite:
         )
         return conn
 
-    def make_batch_args(self, dataset, top, metric, table_name, benchmark,
+    def make_batch_args(self, test, answer, top, metric_ops, table_name, benchmark,
                         warmup_n=0):
-        return dataset["test"], dataset["answer"], top, metric, table_name, warmup_n
+        return test, answer, top, metric_ops, table_name, warmup_n
 
     def apply_session_guc(self, conn, benchmark):
         """Apply per-benchmark session GUCs (probes/ef_search/etc).
@@ -342,10 +342,13 @@ class TestSuite:
         return n
 
     def warmup_query(self, table_name, dataset, metric_ops, top, benchmark):
-        """Return (sql, bind_fn) for warmup queries.
+        """Return (sql, bind_fn) for warmup and measurement queries.
 
-        Subclasses with multi-stage queries override this so the warmup
-        loop exercises the same plan as the measurement loop.
+        Default is the single-stage SQL with a 1-arg bind. Subclasses
+        with multi-stage queries (e.g. IVFFlat-BQ + rerank) override this
+        so the warmup loop exercises the same plan as the measurement
+        loop. The `benchmark` dict carries per-point params (e.g. a
+        rerank amplification factor) when the override needs them.
         """
         sql = (
             f"SELECT id FROM {table_name} ORDER BY embedding {metric_ops} %s "
@@ -711,13 +714,8 @@ class TestSuite:
     def index_name(self, table_name: str) -> str:
         return f"{table_name}_embedding_idx"
 
-    def _begin_index_build(self, suite_name: str, table_name: str, dataset: dict) -> tuple[
+    def create_index(self, suite_name: str, table_name: str, dataset: dict) -> tuple[
         threading.Event, threading.Thread]:
-        """Setup steps shared by every suite's create_index: drop any
-        existing index, configure parallel workers, and start the
-        monitor thread. Subclasses call this from their own
-        create_index, run the actual CREATE INDEX statement, then
-        event.set() + thread.join() to stop the monitor."""
         os.makedirs(f"./results/{suite_name}/index_build", exist_ok=True)
         conn = self.create_connection()
         idx_name = self.index_name(table_name)
@@ -749,11 +747,6 @@ class TestSuite:
 
         return event, index_monitor_thread
 
-    def create_index(self, suite_name: str, table_name: str, dataset: dict) -> None:
-        raise NotImplementedError(
-            "create_index must be implemented by a suite subclass."
-        )
-
     def calculate_index_size(self, suite_name: str, table_name: str):
         conn = self.create_connection()
         idx_name = self.index_name(table_name)
@@ -766,12 +759,8 @@ class TestSuite:
             self.results[suite_name]["index_size"] = result[0]
         conn.close()
 
-    def sequential_bench(self, name: str, table_name: str, conn: psycopg.Connection, metric: str, top: int,
+    def sequential_bench(self, name: str, table_name: str, conn: psycopg.Connection, metric_ops: str, top: int,
                          benchmark: dict, dataset: dict) -> tuple[list[tuple[int, float]], str]:
-        # `metric` here may be either a metric name ("l2") when invoked
-        # from the base path, or a metric operator ("<->") when a subclass
-        # override has already converted it before delegating via super().
-        metric_ops = metric
         m = dataset["test"].shape[0]
         conn.execute("SET jit=false")
 
@@ -846,7 +835,9 @@ class TestSuite:
         return results, metric_ops
 
     def parallel_bench(self, name, table_name, dataset, metric, top, query_clients, benchmark):
-        m = dataset["test"].shape[0]
+        test = dataset["test"]
+        answer = dataset["answer"]
+        m = test.shape[0]
         total_queries = m * query_clients
 
         # Single-client probe picks N, then every worker runs N warmup
@@ -871,7 +862,7 @@ class TestSuite:
         batches = []
         for _ in range(query_clients):
             batch = self.make_batch_args(
-                dataset, top, metric, table_name, benchmark,
+                test, answer, top, metric, table_name, benchmark,
                 warmup_n=warmup_n,
             )
             batches.append(batch)
@@ -940,18 +931,17 @@ class TestSuite:
             "p99_latency": p99,
         }
 
-    # (benchmark-dict key, column header). The terminal summary table and
-    # the markdown benchmark tables emit a column for every entry whose
-    # key appears in any benchmark of the suite, in this order. Subclasses
-    # override with per-index-type keys; the base list is empty so an
-    # unknown suite degrades to an empty table rather than crashing.
-    BENCH_PARAM_COLUMNS: list[tuple[str, str]] = []
+    # (benchmark-dict key, column header). When a subclass populates this
+    # list, the terminal summary table emits a column for every entry whose
+    # key appears in any benchmark of the suite, in this order. The base
+    # default is empty so existing suites (pgpu/vectorchord/pgvector-HNSW)
+    # keep falling through to the legacy efSearch/nprob branches below.
+    BENCH_PARAM_COLUMNS: list = []
 
     # (label, extractor(config_dict, results_dict) -> str) rows appended
-    # to the per-run "Configuration" table in the markdown report.
-    # Extractors receive both the YAML config and the populated results
-    # dict so post-build values (e.g. resolved IVFFlat `lists`) can be
-    # rendered. Subclasses declare these; the base is empty.
+    # to the per-run "Configuration" table in the markdown report. Used by
+    # the new generic results.py branches; existing suite_type branches
+    # ignore it. Default empty.
     CONFIG_COLUMNS: list = []
 
     def print_summary_table(self, suite_name: str):
@@ -962,6 +952,66 @@ class TestSuite:
         if not benchmarks:
             return
 
+        # Generic path: a subclass has declared its own benchmark columns.
+        # Used by pgvector-IVFFlat/-BQ-rerank where neither efSearch nor
+        # nprob is the right axis. Existing suites leave BENCH_PARAM_COLUMNS
+        # empty and fall through to the legacy branches below — preserving
+        # byte-identical output for HNSW/pgpu/vectorchord.
+        if self.BENCH_PARAM_COLUMNS:
+            self._print_summary_table_generic(suite_name, benchmarks, results)
+            return
+
+        # Determine columns based on benchmark parameters
+        first_bench = next(iter(benchmarks.values()))
+        has_ef_search = "efSearch" in first_bench
+        has_nprob = "nprob" in first_bench
+
+        # Build header and rows
+        if has_ef_search:
+            header = "| EF Search | Recall | QPS    | P50 (ms) | P99 (ms) |"
+            sep =    "|-----------|--------|--------|----------|----------|"
+        elif has_nprob:
+            header = "| Probes    | Epsilon | Recall | QPS    | P50 (ms) | P99 (ms) |"
+            sep =    "|-----------|---------|--------|--------|----------|----------|"
+        else:
+            return
+
+        sb = results.get("shared_buffers", "N/A")
+        idx_size = results.get("index_size", "N/A")
+        qc = results.get("query_clients", 1)
+
+        print(f"\n{'=' * len(sep)}")
+        print(f"  Results Summary: {suite_name}")
+        print(f"  shared_buffers: {sb} | clients: {qc} | index_size: {idx_size}")
+        print(f"{'=' * len(sep)}")
+        print(header)
+        print(sep)
+
+        for name, benchmark in benchmarks.items():
+            r = results.get(name, {})
+            if "recall" not in r:
+                continue
+
+            if has_ef_search:
+                print(f"| {benchmark['efSearch']:<9} "
+                      f"| {r['recall']:.4f} "
+                      f"| {r['qps']:>6.2f} "
+                      f"| {r['p50_latency']:>8.2f} "
+                      f"| {r['p99_latency']:>8.2f} |")
+            elif has_nprob:
+                print(f"| {benchmark['nprob']:<9} "
+                      f"| {benchmark['epsilon']:<7} "
+                      f"| {r['recall']:.4f} "
+                      f"| {r['qps']:>6.2f} "
+                      f"| {r['p50_latency']:>8.2f} "
+                      f"| {r['p99_latency']:>8.2f} |")
+
+        print()
+
+    def _print_summary_table_generic(self, suite_name, benchmarks, results):
+        """Render a summary table using BENCH_PARAM_COLUMNS. Only invoked
+        when a subclass populates BENCH_PARAM_COLUMNS; existing suites
+        keep using the legacy efSearch/nprob branches above."""
         present_keys = [
             (key, header)
             for key, header in self.BENCH_PARAM_COLUMNS

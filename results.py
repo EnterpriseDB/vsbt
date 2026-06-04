@@ -34,12 +34,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-# Each TestSuite owns its column spec — see common.TestSuite.CONFIG_COLUMNS
-# and BENCH_PARAM_COLUMNS — and threads them through process_suite_results
-# below. ResultsManager renders whatever it's given; it does not know which
-# index types or extensions exist.
-
-
 def format_markdown_table(headers: list[str], rows: list[list[str]]) -> list[str]:
     """Format a markdown table with proper column alignment."""
     num_cols = len(headers)
@@ -165,11 +159,8 @@ class ResultsManager:
             "ef_search": benchmark_config.get("efSearch", "N/A"),
             "lists": str(config.get("lists", results.get("lists", "N/A"))),
             "sampling_factor": config.get("samplingFactor", "N/A"),
-            "nprob": benchmark_config.get("nprob", benchmark_config.get("probes", "N/A")),
+            "nprob": benchmark_config.get("nprob", "N/A"),
             "epsilon": benchmark_config.get("epsilon", "N/A"),
-            "rerank_limit_amplify_factor": benchmark_config.get(
-                "rerank_limit_amplify_factor", "N/A"
-            ),
             "residual_quantization": config.get("residual_quantization", "N/A"),
             "build_threads": results.get("build_threads", "N/A"),
             "load_time_s": results.get("load_time", "N/A"),
@@ -404,8 +395,29 @@ class ResultsManager:
             ["Query Clients", str(query_clients)],
             ["Top-K", str(config.get("top", "N/A"))],
         ]
-        for label, extractor in (config_columns or []):
-            config_rows.append([label, extractor(config, results)])
+
+        if suite_type == "pgvector":
+            config_rows.extend([
+                ["M", str(config.get("m", "N/A"))],
+                ["EF Construction", str(config.get("efConstruction", "N/A"))],
+            ])
+        elif suite_type in ("vectorchord", "pgpu"):
+            config_rows.extend([
+                ["Lists", str(config.get("lists", results.get("lists", "N/A")))],
+                ["Sampling Factor", str(config.get("samplingFactor", "N/A"))],
+                ["Residual Quantization", str(config.get("residual_quantization", "N/A"))],
+            ])
+            if suite_type == "vectorchord":
+                config_rows.extend([
+                    ["Build Threads", str(results.get("build_threads", "N/A"))],
+                    ["K-means Hierarchical", str(config.get("kmeans_hierarchical", "N/A"))],
+                ])
+        elif suite_type in ("pgvector-ivfflat", "pgvector-ivfflat-bq-rerank"):
+            # New pgvector index types ship their own column specs; the
+            # caller passes config_columns from the suite. Each entry is
+            # (label, extractor(config_dict, results_dict) -> str).
+            for label, extractor in (config_columns or []):
+                config_rows.append([label, extractor(config, results)])
 
         lines.extend(format_markdown_table(["Parameter", "Value"], config_rows))
 
@@ -426,25 +438,54 @@ class ResultsManager:
 
         # --- Benchmark Results ---
         benchmarks = config.get("benchmarks", {})
-        bench_cols = bench_columns or []
-        bench_headers = [h for _, h in bench_cols] + ["Recall", "QPS", "P50 (ms)", "P99 (ms)"]
+        is_ivfflat = suite_type in ("pgvector-ivfflat", "pgvector-ivfflat-bq-rerank")
+        bench_cols = bench_columns if is_ivfflat else None
         bench_rows = []
         for bench_name, bench_config in benchmarks.items():
             if bench_name in results and isinstance(results[bench_name], dict) and "recall" in results[bench_name]:
                 br = results[bench_name]
-                bench_rows.append(
-                    [str(bench_config.get(key, "N/A")) for key, _ in bench_cols]
-                    + [
+                if suite_type == "pgvector":
+                    bench_rows.append([
+                        str(bench_config.get("efSearch", "N/A")),
+                        f"{br['recall']:.4f}",
+                        f"{br['qps']:.2f}",
+                        f"{br['p50_latency']:.2f}",
+                        f"{br['p99_latency']:.2f}",
+                    ])
+                elif is_ivfflat:
+                    # New pgvector index types: caller-supplied bench_cols
+                    # determine which benchmark dict keys become columns.
+                    row = [str(bench_config.get(key, "N/A")) for key, _ in (bench_cols or [])]
+                    row += [
                         f"{br['recall']:.4f}",
                         f"{br['qps']:.2f}",
                         f"{br['p50_latency']:.2f}",
                         f"{br['p99_latency']:.2f}",
                     ]
-                )
+                    bench_rows.append(row)
+                else:
+                    bench_rows.append([
+                        str(bench_config.get("nprob", "N/A")),
+                        str(bench_config.get("epsilon", "N/A")),
+                        f"{br['recall']:.4f}",
+                        f"{br['qps']:.2f}",
+                        f"{br['p50_latency']:.2f}",
+                        f"{br['p99_latency']:.2f}",
+                    ])
 
         if bench_rows:
             lines.extend(["", "---", "", "## Benchmark Results", ""])
-            lines.extend(format_markdown_table(bench_headers, bench_rows))
+            if suite_type == "pgvector":
+                lines.extend(format_markdown_table(
+                    ["EF Search", "Recall", "QPS", "P50 (ms)", "P99 (ms)"], bench_rows))
+            elif is_ivfflat:
+                headers = [h for _, h in (bench_cols or [])] + [
+                    "Recall", "QPS", "P50 (ms)", "P99 (ms)"
+                ]
+                lines.extend(format_markdown_table(headers, bench_rows))
+            else:
+                lines.extend(format_markdown_table(
+                    ["nprob", "epsilon", "Recall", "QPS", "P50 (ms)", "P99 (ms)"], bench_rows))
         elif not benchmarks:
             lines.extend(["", "", "*No benchmark results (build-only mode)*", ""])
 
@@ -546,13 +587,8 @@ class ResultsManager:
         # --- Benchmark Results (unified table across all runs, ordered by timestamp) ---
         lines.extend(["", "---", "", "## Benchmark Results", ""])
 
-        bench_cols = bench_columns or []
-        param_headers = [h for _, h in bench_cols]
-        bench_headers = (
-            ["Date", "shared_buffers", "Clients"]
-            + param_headers
-            + ["Recall", "QPS", "P50 (ms)", "P99 (ms)"]
-        )
+        is_ivfflat = suite_type in ("pgvector-ivfflat", "pgvector-ivfflat-bq-rerank")
+        bench_cols = bench_columns if is_ivfflat else None
 
         bench_rows = []
         for run_data in all_runs:
@@ -563,25 +599,65 @@ class ResultsManager:
             run_date = self._run_date_str(run_id)
 
             sb = r.get("shared_buffers", "N/A")
+            mwm = r.get("maintenance_work_mem", "N/A")
             qc = r.get("query_clients", 1)
 
             benchmarks = c.get("benchmarks", {})
             for bench_name, bench_config in benchmarks.items():
                 if bench_name in r and isinstance(r[bench_name], dict) and "recall" in r[bench_name]:
                     br = r[bench_name]
-                    bench_rows.append(
-                        [run_date, sb, str(qc)]
-                        + [str(bench_config.get(key, "N/A")) for key, _ in bench_cols]
-                        + [
+                    if suite_type == "pgvector":
+                        bench_rows.append([
+                            run_date,
+                            sb,
+                            str(qc),
+                            str(bench_config.get("efSearch", "N/A")),
                             f"{br['recall']:.4f}",
                             f"{br['qps']:.2f}",
                             f"{br['p50_latency']:.2f}",
                             f"{br['p99_latency']:.2f}",
-                        ]
-                    )
+                        ])
+                    elif is_ivfflat:
+                        bench_rows.append(
+                            [run_date, sb, str(qc)]
+                            + [str(bench_config.get(key, "N/A")) for key, _ in (bench_cols or [])]
+                            + [
+                                f"{br['recall']:.4f}",
+                                f"{br['qps']:.2f}",
+                                f"{br['p50_latency']:.2f}",
+                                f"{br['p99_latency']:.2f}",
+                            ]
+                        )
+                    else:
+                        bench_rows.append([
+                            run_date,
+                            sb,
+                            str(qc),
+                            str(bench_config.get("nprob", "N/A")),
+                            str(bench_config.get("epsilon", "N/A")),
+                            f"{br['recall']:.4f}",
+                            f"{br['qps']:.2f}",
+                            f"{br['p50_latency']:.2f}",
+                            f"{br['p99_latency']:.2f}",
+                        ])
 
         if bench_rows:
-            lines.extend(format_markdown_table(bench_headers, bench_rows))
+            if suite_type == "pgvector":
+                lines.extend(format_markdown_table(
+                    ["Date", "shared_buffers", "Clients",
+                     "EF Search", "Recall", "QPS", "P50 (ms)", "P99 (ms)"],
+                    bench_rows))
+            elif is_ivfflat:
+                lines.extend(format_markdown_table(
+                    ["Date", "shared_buffers", "Clients"]
+                    + [h for _, h in (bench_cols or [])]
+                    + ["Recall", "QPS", "P50 (ms)", "P99 (ms)"],
+                    bench_rows))
+            else:
+                lines.extend(format_markdown_table(
+                    ["Date", "shared_buffers", "Clients",
+                     "nprob", "epsilon", "Recall", "QPS", "P50 (ms)", "P99 (ms)"],
+                    bench_rows))
         else:
             lines.append("*No benchmark results recorded.*")
 
@@ -675,7 +751,8 @@ class ResultsManager:
             }
             run_report = self._generate_run_report(
                 test_name, suite_type, run_data, query_clients, system_dashboard_path,
-                config_columns=config_columns, bench_columns=bench_columns,
+                config_columns=config_columns,
+                bench_columns=bench_columns,
             )
             run_report_path = self._run_dir(test_name) / "report.md"
             with open(run_report_path, "w") as f:
