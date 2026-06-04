@@ -1,0 +1,15 @@
+pgvector-ivfflat-cohere-2m-1k:
+  indexType: ivfflat
+  dataset: cohere-2m-cos
+  datasetType: parquet
+  metric: cos
+  lists: 1414  # ~sqrt(2M)
+  maintenance_work_mem: 8GB
+  pg_parallel_workers: 32
+  top: 10
+  benchmarks:
+    "20":  { probes: 20 }
+    "40":  { probes: 40 }
+    "80":  { probes: 80 }
+    "150": { probes: 150 }
+    "300": { probes: 300 }

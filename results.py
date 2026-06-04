@@ -345,6 +345,8 @@ class ResultsManager:
         run_data: dict,
         query_clients: int = 1,
         system_dashboard_path: Optional[Path] = None,
+        config_columns: Optional[list] = None,
+        bench_columns: Optional[list] = None,
     ) -> str:
         """Generate a full markdown report for a single run."""
         results = run_data.get("results", {})
@@ -410,6 +412,12 @@ class ResultsManager:
                     ["Build Threads", str(results.get("build_threads", "N/A"))],
                     ["K-means Hierarchical", str(config.get("kmeans_hierarchical", "N/A"))],
                 ])
+        elif suite_type in ("pgvector-ivfflat", "pgvector-ivfflat-bq-rerank"):
+            # New pgvector index types ship their own column specs; the
+            # caller passes config_columns from the suite. Each entry is
+            # (label, extractor(config_dict, results_dict) -> str).
+            for label, extractor in (config_columns or []):
+                config_rows.append([label, extractor(config, results)])
 
         lines.extend(format_markdown_table(["Parameter", "Value"], config_rows))
 
@@ -430,6 +438,8 @@ class ResultsManager:
 
         # --- Benchmark Results ---
         benchmarks = config.get("benchmarks", {})
+        is_ivfflat = suite_type in ("pgvector-ivfflat", "pgvector-ivfflat-bq-rerank")
+        bench_cols = bench_columns if is_ivfflat else None
         bench_rows = []
         for bench_name, bench_config in benchmarks.items():
             if bench_name in results and isinstance(results[bench_name], dict) and "recall" in results[bench_name]:
@@ -442,6 +452,17 @@ class ResultsManager:
                         f"{br['p50_latency']:.2f}",
                         f"{br['p99_latency']:.2f}",
                     ])
+                elif is_ivfflat:
+                    # New pgvector index types: caller-supplied bench_cols
+                    # determine which benchmark dict keys become columns.
+                    row = [str(bench_config.get(key, "N/A")) for key, _ in (bench_cols or [])]
+                    row += [
+                        f"{br['recall']:.4f}",
+                        f"{br['qps']:.2f}",
+                        f"{br['p50_latency']:.2f}",
+                        f"{br['p99_latency']:.2f}",
+                    ]
+                    bench_rows.append(row)
                 else:
                     bench_rows.append([
                         str(bench_config.get("nprob", "N/A")),
@@ -457,6 +478,11 @@ class ResultsManager:
             if suite_type == "pgvector":
                 lines.extend(format_markdown_table(
                     ["EF Search", "Recall", "QPS", "P50 (ms)", "P99 (ms)"], bench_rows))
+            elif is_ivfflat:
+                headers = [h for _, h in (bench_cols or [])] + [
+                    "Recall", "QPS", "P50 (ms)", "P99 (ms)"
+                ]
+                lines.extend(format_markdown_table(headers, bench_rows))
             else:
                 lines.extend(format_markdown_table(
                     ["nprob", "epsilon", "Recall", "QPS", "P50 (ms)", "P99 (ms)"], bench_rows))
@@ -490,6 +516,7 @@ class ResultsManager:
         system_metrics: Optional[str] = None,
         pg_stats: Optional[str] = None,
         system_dashboard_path: Optional[Path] = None,
+        bench_columns: Optional[list] = None,
     ) -> Path:
         """
         Generate an aggregated markdown report that includes all runs for this test.
@@ -560,6 +587,9 @@ class ResultsManager:
         # --- Benchmark Results (unified table across all runs, ordered by timestamp) ---
         lines.extend(["", "---", "", "## Benchmark Results", ""])
 
+        is_ivfflat = suite_type in ("pgvector-ivfflat", "pgvector-ivfflat-bq-rerank")
+        bench_cols = bench_columns if is_ivfflat else None
+
         bench_rows = []
         for run_data in all_runs:
             r = run_data.get("results", {})
@@ -587,6 +617,17 @@ class ResultsManager:
                             f"{br['p50_latency']:.2f}",
                             f"{br['p99_latency']:.2f}",
                         ])
+                    elif is_ivfflat:
+                        bench_rows.append(
+                            [run_date, sb, str(qc)]
+                            + [str(bench_config.get(key, "N/A")) for key, _ in (bench_cols or [])]
+                            + [
+                                f"{br['recall']:.4f}",
+                                f"{br['qps']:.2f}",
+                                f"{br['p50_latency']:.2f}",
+                                f"{br['p99_latency']:.2f}",
+                            ]
+                        )
                     else:
                         bench_rows.append([
                             run_date,
@@ -605,6 +646,12 @@ class ResultsManager:
                 lines.extend(format_markdown_table(
                     ["Date", "shared_buffers", "Clients",
                      "EF Search", "Recall", "QPS", "P50 (ms)", "P99 (ms)"],
+                    bench_rows))
+            elif is_ivfflat:
+                lines.extend(format_markdown_table(
+                    ["Date", "shared_buffers", "Clients"]
+                    + [h for _, h in (bench_cols or [])]
+                    + ["Recall", "QPS", "P50 (ms)", "P99 (ms)"],
                     bench_rows))
             else:
                 lines.extend(format_markdown_table(
@@ -655,6 +702,8 @@ class ResultsManager:
         system_metrics: Optional[str] = None,
         pg_stats: Optional[str] = None,
         system_dashboard_path: Optional[Path] = None,
+        config_columns: Optional[list] = None,
+        bench_columns: Optional[list] = None,
     ):
         """
         Process and save all results for a benchmark suite.
@@ -702,6 +751,8 @@ class ResultsManager:
             }
             run_report = self._generate_run_report(
                 test_name, suite_type, run_data, query_clients, system_dashboard_path,
+                config_columns=config_columns,
+                bench_columns=bench_columns,
             )
             run_report_path = self._run_dir(test_name) / "report.md"
             with open(run_report_path, "w") as f:
@@ -717,6 +768,7 @@ class ResultsManager:
                 system_metrics=system_metrics,
                 pg_stats=pg_stats,
                 system_dashboard_path=system_dashboard_path,
+                bench_columns=bench_columns,
             )
 
         print(f"\n Results available in {self.base_dir}/")

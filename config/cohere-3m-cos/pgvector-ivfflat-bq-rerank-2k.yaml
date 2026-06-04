@@ -1,0 +1,15 @@
+pgvector-ivfflat-bq-rerank-cohere-3m-2k:
+  indexType: ivfflat_bq_rerank
+  dataset: cohere-3m-cos
+  datasetType: parquet
+  metric: cos
+  lists: 2000  # ~sqrt(3M), rounded
+  maintenance_work_mem: 12GB
+  pg_parallel_workers: 32
+  top: 10
+  benchmarks:
+    "20":  { probes: 20 }
+    "40":  { probes: 40 }
+    "80":  { probes: 80 }
+    "150": { probes: 150 }
+    "300": { probes: 300 }

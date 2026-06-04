@@ -341,8 +341,23 @@ class TestSuite:
             raise ValueError(f"--warmup integer must be >= 0, got {n}")
         return n
 
+    def warmup_query(self, table_name, dataset, metric_ops, top, benchmark):
+        """Return (sql, bind_fn) for warmup and measurement queries.
+
+        Default is the single-stage SQL with a 1-arg bind. Subclasses
+        with multi-stage queries (e.g. IVFFlat-BQ + rerank) override this
+        so the warmup loop exercises the same plan as the measurement
+        loop. The `benchmark` dict carries per-point params (e.g. a
+        rerank amplification factor) when the override needs them.
+        """
+        sql = (
+            f"SELECT id FROM {table_name} ORDER BY embedding {metric_ops} %s "
+            f"LIMIT {top}"
+        )
+        return sql, (lambda q: (q,))
+
     def warmup_for_benchmark(self, conn, table_name, dataset, metric_ops, top,
-                             benchmark_name):
+                             benchmark_name, benchmark=None):
         """Run warmup queries on `conn`; returns (n_warmup_queries, converged).
 
         The caller must apply per-benchmark GUCs on `conn` BEFORE invoking
@@ -361,9 +376,8 @@ class TestSuite:
         if n_test == 0:
             return 0, False
 
-        query_sql = (
-            f"SELECT id FROM {table_name} ORDER BY embedding {metric_ops} %s "
-            f"LIMIT {top}"
+        query_sql, bind_fn = self.warmup_query(
+            table_name, dataset, metric_ops, top, benchmark
         )
 
         cursor = conn.cursor()
@@ -390,7 +404,7 @@ class TestSuite:
             while i < max_n:
                 q = test[i % n_test]
                 t0 = time.perf_counter()
-                cursor.execute(query_sql, (q,))
+                cursor.execute(query_sql, bind_fn(q))
                 cursor.fetchall()
                 latencies.append(time.perf_counter() - t0)
                 i += 1
@@ -765,8 +779,13 @@ class TestSuite:
         if hasattr(answers_list, "tolist"):
             answers_list = [a[:top].tolist() if hasattr(a, "tolist") else a[:top] for a in answers_list]
 
-        # Build query template (psycopg3 handles prepared statement caching)
-        query_sql = f"SELECT id FROM {table_name} ORDER BY embedding {metric_ops} %s LIMIT {top}"
+        # warmup_query is the single source of truth for the per-benchmark
+        # query template + bind shape. Suites with multi-stage queries (e.g.
+        # IVFFlat-BQ + rerank) plug them in by overriding warmup_query;
+        # measurement here uses the same SQL the warmup loop uses.
+        query_sql, bind_fn = self.warmup_query(
+            table_name, dataset, metric_ops, top, benchmark
+        )
 
         results = []
         latencies = []
@@ -783,7 +802,7 @@ class TestSuite:
             query = single_query if self.debug_single_query else dataset["test"][i]
 
             start = time.perf_counter()
-            cursor.execute(query_sql, (query,))
+            cursor.execute(query_sql, bind_fn(query))
             result = cursor.fetchall()
             end = time.perf_counter()
 
@@ -831,7 +850,8 @@ class TestSuite:
             try:
                 self.apply_session_guc(probe_conn, benchmark)
                 warmup_n, _converged = self.warmup_for_benchmark(
-                    probe_conn, table_name, dataset, probe_metric_ops, top, name
+                    probe_conn, table_name, dataset, probe_metric_ops, top, name,
+                    benchmark=benchmark,
                 )
             finally:
                 probe_conn.close()
@@ -987,8 +1007,8 @@ class TestSuite:
 
         self.print_summary_table(suite_name)
 
-    def generate_markdown_result(self):
-        return NotImplementedError("generate_markdown_result method should be implemented in subclasses.")
+    def generate_markdown_result(self) -> None:
+        raise NotImplementedError("generate_markdown_result method should be implemented in subclasses.")
 
     def run_suite(self, name: str):
         os.makedirs(f"./results/{name}", exist_ok=True)

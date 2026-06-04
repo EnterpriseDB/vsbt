@@ -1,0 +1,15 @@
+pgvector-ivfflat-openai-5m-2k:
+  indexType: ivfflat
+  dataset: openai-5m-cos
+  datasetType: parquet
+  metric: cos
+  lists: 2236  # ~sqrt(5M)
+  maintenance_work_mem: 17GB
+  pg_parallel_workers: 32
+  top: 10
+  benchmarks:
+    "20":  { probes: 20 }
+    "40":  { probes: 40 }
+    "80":  { probes: 80 }
+    "150": { probes: 150 }
+    "300": { probes: 300 }

@@ -7,6 +7,8 @@ A comprehensive benchmarking tool for PostgreSQL vector search extensions. Compa
 | Extension | Index Type | Description |
 |-----------|------------|-------------|
 | **[pgvector](https://github.com/pgvector/pgvector)** | [HNSW](https://arxiv.org/abs/1603.09320) | Standard CPU-based approximate nearest neighbor search |
+| **[pgvector](https://github.com/pgvector/pgvector)** | IVFFlat | Inverted-file index over the float vector column |
+| **[pgvector](https://github.com/pgvector/pgvector)** | IVFFlat BQ + Rerank | IVFFlat over `binary_quantize(embedding)` with full-precision rerank |
 | **[vchordq](https://github.com/tensorchord/VectorChord)** | [IVF-RaBitQ](https://arxiv.org/abs/2405.12497) ([VectorChord](https://blog.vectorchord.ai/scaling-vector-search-to-1-billion-on-postgresql)) | High dimensionality & high performance vector quantization & compression |
 | **[pgpu](https://github.com/EnterpriseDB/pgpu)** | IVF-RaBitQ (VectorChord) | GPU-accelerated index building for VectorChord |
 
@@ -118,12 +120,20 @@ Configs are grouped by dataset (one directory per dataset, e.g. `config/sift-128
 ### Running pgvector Benchmarks
 
 ```bash
-# Run with default 5M dataset configuration
+# HNSW (default): pick a config without indexType, or with indexType: hnsw
 python pgvector_suite.py -s config/laion-5m-test-ip/pgvector-m16-128.yaml
+
+# Vanilla IVFFlat: indexType: ivfflat
+python pgvector_suite.py -s config/laion-5m-test-ip/pgvector-ivfflat-4k.yaml
+
+# IVFFlat with binary quantization + exact rerank: indexType: ivfflat_bq_rerank
+python pgvector_suite.py -s config/openai-5m-cos/pgvector-ivfflat-bq-rerank-2k.yaml
 
 # Skip loading if data already exists
 python pgvector_suite.py -s config/laion-5m-test-ip/pgvector-m16-128.yaml --skip-add-embeddings
 ```
+
+The same `pgvector_suite.py` entry point dispatches HNSW / IVFFlat / IVFFlat-BQ-Rerank based on the `indexType` field in the YAML (defaults to `hnsw` when absent).
 
 ### Running VectorChord Benchmarks
 
@@ -257,6 +267,8 @@ The last tier in each preset uses the full machine without memory constraints.
 
 ### pgvector Configuration Example
 
+HNSW (default — `indexType` may be omitted):
+
 ```yaml
 pgvector-laion-5m-m16-128:
   dataset: laion-5m-test-ip
@@ -273,6 +285,42 @@ pgvector-laion-5m-m16-128:
     "80": { efSearch: 80 }
     "120": { efSearch: 120 }
     "200": { efSearch: 200 }
+```
+
+Vanilla IVFFlat (`indexType: ivfflat`):
+
+```yaml
+pgvector-ivfflat-laion-5m-4k:
+  indexType: ivfflat
+  dataset: laion-5m-test-ip
+  datasetType: hdf5
+  metric: dot
+  lists: 4472          # ~2*sqrt(N); use "auto" to pick sqrt(N) at runtime
+  maintenance_work_mem: 17GB
+  pg_parallel_workers: 32
+  top: 10
+  benchmarks:
+    "40":  { probes: 40 }
+    "120": { probes: 120 }
+    "400": { probes: 400 }
+```
+
+IVFFlat with binary quantization + exact rerank (`indexType: ivfflat_bq_rerank`). The index is built on `binary_quantize(embedding)::bit(dim)` with Hamming distance; queries fetch `top * rerank_limit_amplify_factor` candidates from the BQ index and re-sort them by full-precision distance. `rerank_limit_amplify_factor` defaults to 20 and can be omitted.
+
+```yaml
+pgvector-ivfflat-bq-rerank-openai-5m-2k:
+  indexType: ivfflat_bq_rerank
+  dataset: openai-5m-cos
+  datasetType: parquet
+  metric: cos
+  lists: 2236
+  maintenance_work_mem: 17GB
+  pg_parallel_workers: 32
+  top: 10
+  benchmarks:
+    "40":  { probes: 40 }
+    "120": { probes: 120 }
+    "400": { probes: 400 }
 ```
 
 ### VectorChord Configuration Example
