@@ -931,34 +931,12 @@ class TestSuite:
             "p99_latency": p99,
         }
 
-    # (benchmark-dict key, column header). When a subclass populates this
-    # list, the terminal summary table emits a column for every entry whose
-    # key appears in any benchmark of the suite, in this order. The base
-    # default is empty so existing suites (pgpu/vectorchord/pgvector-HNSW)
-    # keep falling through to the legacy efSearch/nprob branches below.
-    BENCH_PARAM_COLUMNS: list = []
-
-    # (label, extractor(config_dict, results_dict) -> str) rows appended
-    # to the per-run "Configuration" table in the markdown report. Used by
-    # the new generic results.py branches; existing suite_type branches
-    # ignore it. Default empty.
-    CONFIG_COLUMNS: list = []
-
     def print_summary_table(self, suite_name: str):
         """Print a summary table of all benchmark results for a suite."""
         benchmarks = self.config[suite_name].get("benchmarks", {})
         results = self.results.get(suite_name, {})
 
         if not benchmarks:
-            return
-
-        # Generic path: a subclass has declared its own benchmark columns.
-        # Used by pgvector-IVFFlat/-BQ-rerank where neither efSearch nor
-        # nprob is the right axis. Existing suites leave BENCH_PARAM_COLUMNS
-        # empty and fall through to the legacy branches below — preserving
-        # byte-identical output for HNSW/pgpu/vectorchord.
-        if self.BENCH_PARAM_COLUMNS:
-            self._print_summary_table_generic(suite_name, benchmarks, results)
             return
 
         # Determine columns based on benchmark parameters
@@ -1006,62 +984,6 @@ class TestSuite:
                       f"| {r['p50_latency']:>8.2f} "
                       f"| {r['p99_latency']:>8.2f} |")
 
-        print()
-
-    def _print_summary_table_generic(self, suite_name, benchmarks, results):
-        """Render a summary table using BENCH_PARAM_COLUMNS. Only invoked
-        when a subclass populates BENCH_PARAM_COLUMNS; existing suites
-        keep using the legacy efSearch/nprob branches above."""
-        present_keys = [
-            (key, header)
-            for key, header in self.BENCH_PARAM_COLUMNS
-            if any(key in b for b in benchmarks.values())
-        ]
-        if not present_keys:
-            return
-
-        param_headers = [h for _, h in present_keys]
-        result_headers = ["Recall", "QPS", "P50 (ms)", "P99 (ms)"]
-        all_headers = param_headers + result_headers
-
-        rows = []
-        for name, benchmark in benchmarks.items():
-            r = results.get(name, {})
-            if "recall" not in r:
-                continue
-            row = [str(benchmark.get(key, "N/A")) for key, _ in present_keys]
-            row += [
-                f"{r['recall']:.4f}",
-                f"{r['qps']:.2f}",
-                f"{r['p50_latency']:.2f}",
-                f"{r['p99_latency']:.2f}",
-            ]
-            rows.append(row)
-
-        if not rows:
-            return
-
-        widths = [len(h) for h in all_headers]
-        for row in rows:
-            for i, cell in enumerate(row):
-                widths[i] = max(widths[i], len(cell))
-
-        def fmt_row(cells):
-            return "| " + " | ".join(c.ljust(widths[i]) for i, c in enumerate(cells)) + " |"
-
-        sep = "|-" + "-|-".join("-" * w for w in widths) + "-|"
-        sb = results.get("shared_buffers", "N/A")
-        idx_size = results.get("index_size", "N/A")
-        qc = results.get("query_clients", 1)
-
-        print(f"\n{'=' * len(sep)}")
-        print(f"  Results Summary: {suite_name}")
-        print(f"  shared_buffers: {sb} | clients: {qc} | index_size: {idx_size}")
-        print(f"{'=' * len(sep)}")
-        print(fmt_row(all_headers))
-        print(sep)
-        for row in rows:
-            print(fmt_row(row))
         print()
 
     def run_benchmarks(self, suite_name: str, table_name: str, dataset: dict, query_clients):

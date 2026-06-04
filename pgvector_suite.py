@@ -362,11 +362,6 @@ class TestSuite(common.TestSuite):
                 f"expected one of {sorted(INDEX_SPECS)}"
             )
         self.spec = INDEX_SPECS[index_type]
-        # Empty for HNSW; populated for IVFFlat variants. The base class
-        # uses these to switch summary-table rendering between the legacy
-        # efSearch path and the new generic path.
-        self.BENCH_PARAM_COLUMNS = list(self.spec.bench_param_columns)
-        self.CONFIG_COLUMNS = list(self.spec.config_columns)
         self._batch_dataset = None
 
     def create_connection(self):
@@ -629,6 +624,74 @@ class TestSuite(common.TestSuite):
             name, table_name, conn, metric_ops, top, benchmark, dataset
         )
 
+    def print_summary_table(self, suite_name: str):
+        """HNSW renders via the upstream base method (byte-identical to
+        upstream). IVFFlat / BQ-rerank need columns the base can't render
+        (Probes, Rerank Amp), so they go through a spec-driven helper."""
+        if self.spec.index_type == "hnsw":
+            return super().print_summary_table(suite_name)
+
+        benchmarks = self.config[suite_name].get("benchmarks", {})
+        results = self.results.get(suite_name, {})
+        if not benchmarks:
+            return
+        self._print_summary_table_for_spec(suite_name, benchmarks, results)
+
+    def _print_summary_table_for_spec(self, suite_name, benchmarks, results):
+        """Render a summary table using `self.spec.bench_param_columns`.
+        Used only by the IVFFlat / BQ-rerank specs."""
+        present_keys = [
+            (key, header)
+            for key, header in self.spec.bench_param_columns
+            if any(key in b for b in benchmarks.values())
+        ]
+        if not present_keys:
+            return
+
+        param_headers = [h for _, h in present_keys]
+        result_headers = ["Recall", "QPS", "P50 (ms)", "P99 (ms)"]
+        all_headers = param_headers + result_headers
+
+        rows = []
+        for name, benchmark in benchmarks.items():
+            r = results.get(name, {})
+            if "recall" not in r:
+                continue
+            row = [str(benchmark.get(key, "N/A")) for key, _ in present_keys]
+            row += [
+                f"{r['recall']:.4f}",
+                f"{r['qps']:.2f}",
+                f"{r['p50_latency']:.2f}",
+                f"{r['p99_latency']:.2f}",
+            ]
+            rows.append(row)
+
+        if not rows:
+            return
+
+        widths = [len(h) for h in all_headers]
+        for row in rows:
+            for i, cell in enumerate(row):
+                widths[i] = max(widths[i], len(cell))
+
+        def fmt_row(cells):
+            return "| " + " | ".join(c.ljust(widths[i]) for i, c in enumerate(cells)) + " |"
+
+        sep = "|-" + "-|-".join("-" * w for w in widths) + "-|"
+        sb = results.get("shared_buffers", "N/A")
+        idx_size = results.get("index_size", "N/A")
+        qc = results.get("query_clients", 1)
+
+        print(f"\n{'=' * len(sep)}")
+        print(f"  Results Summary: {suite_name}")
+        print(f"  shared_buffers: {sb} | clients: {qc} | index_size: {idx_size}")
+        print(f"{'=' * len(sep)}")
+        print(fmt_row(all_headers))
+        print(sep)
+        for row in rows:
+            print(fmt_row(row))
+        print()
+
     def generate_markdown_result(self):
         """Generate benchmark results with charts and consolidated CSV."""
         self.debug_log(f"Results: {self.results}")
@@ -650,8 +713,8 @@ class TestSuite(common.TestSuite):
             # and ignores the new column kwargs. IVFFlat variants take the
             # new branch and consume them.
             if self.spec.index_type != "hnsw":
-                kwargs["config_columns"] = self.CONFIG_COLUMNS
-                kwargs["bench_columns"] = self.BENCH_PARAM_COLUMNS
+                kwargs["config_columns"] = list(self.spec.config_columns)
+                kwargs["bench_columns"] = list(self.spec.bench_param_columns)
             results_manager.process_suite_results(**kwargs)
 
 
