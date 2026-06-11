@@ -122,6 +122,8 @@ class TestSuite(common.TestSuite):
     def init_ext(self, suite_name: str = None):
         """Initialize required PostgreSQL extensions."""
         conn = super().create_connection()
+        # Surface server NOTICEs in vsbt output
+        conn.add_notice_handler(common.psql_log_handler)
         conn.execute("CREATE EXTENSION IF NOT EXISTS vchord CASCADE")
         conn.close()
         self.debug_log("Extensions initialized successfully.")

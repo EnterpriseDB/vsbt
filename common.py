@@ -164,6 +164,12 @@ WARMUP_MAX = 5000
 WARMUP_HARD_FLOOR = 100
 
 
+def psql_log_handler(diag):
+    """Notice handler for psycopg connections — prints PostgreSQL NOTICEs."""
+    if diag.severity and diag.message_primary:
+        print(f"[PG {diag.severity}] {diag.message_primary}")
+
+
 def get_keepalive_kwargs() -> dict:
     """Get keepalive arguments for the database connection."""
 
