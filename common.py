@@ -1190,6 +1190,11 @@ class TestSuite:
                 run_workload(suite_name, self.config[suite_name], self.url,
                              chunk_size=self.chunk_size,
                              num_threads=self.max_load_threads)
+            elif mode == "filtered":
+                from filtered import run_filtered
+                run_filtered(suite_name, self.config[suite_name], self.url,
+                             chunk_size=self.chunk_size,
+                             num_threads=self.max_load_threads)
             else:
                 self.run_suite(suite_name)
         self.generate_markdown_result()

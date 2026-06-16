@@ -69,6 +69,101 @@ def pack_copy_binary_chunk(ids: np.ndarray, vecs: np.ndarray) -> bytes:
     return _PGCOPY_HEADER + row_data.tobytes() + _PGCOPY_TRAILER
 
 
+def pack_copy_binary_chunk_with_label(
+    ids: np.ndarray, vecs: np.ndarray, labels: np.ndarray
+) -> bytes:
+    """
+    Pack (ids, vecs, labels) for COPY BINARY into a table with columns
+    (id INTEGER, embedding vector, filter_label SMALLINT).
+
+    Row layout (big-endian):
+      int16  field_count = 3
+      int32  id_len = 4
+      int32  id
+      int32  vec_len = 4 + D*4
+      int16  dim  |  int16 unused=0  |  float32×D
+      int32  label_len = 2
+      int16  filter_label
+    """
+    N, D = vecs.shape
+    vec_field_len = 4 + D * 4
+
+    header = np.empty(N, dtype=[
+        ("field_count",  ">i2"),
+        ("id_field_len", ">i4"),
+        ("id_val",       ">i4"),
+        ("vec_field_len", ">i4"),
+    ])
+    header["field_count"]   = 3
+    header["id_field_len"]  = 4
+    header["id_val"]        = ids
+    header["vec_field_len"] = vec_field_len
+
+    dim_prefix = np.zeros(N, dtype=[("dim", ">i2"), ("unused", ">i2")])
+    dim_prefix["dim"] = D
+
+    label_field = np.empty(N, dtype=[("lbl_len", ">i4"), ("lbl_val", ">i2")])
+    label_field["lbl_len"] = 2
+    label_field["lbl_val"] = labels.astype(">i2")
+
+    vec_be = vecs if vecs.dtype == np.dtype(">f4") else vecs.astype(">f4")
+
+    header_b = header.view(np.uint8).reshape(N, 14)
+    dim_b    = dim_prefix.view(np.uint8).reshape(N, 4)
+    vec_b    = vec_be.view(np.uint8).reshape(N, D * 4)
+    label_b  = label_field.view(np.uint8).reshape(N, 6)
+
+    row_data = np.concatenate([header_b, dim_b, vec_b, label_b], axis=1)
+    return _PGCOPY_HEADER + row_data.tobytes() + _PGCOPY_TRAILER
+
+
+def load_vectors_with_labels(
+    conn_factory,
+    table_name: str,
+    data,
+    labels: np.ndarray,
+    n: int,
+    chunk_size: int = 500_000,
+    num_threads: int = 4,
+    progress: tqdm = None,
+) -> None:
+    """Load vectors + int8 filter labels using the fast binary-pack path."""
+    def _load_chunk(chunk_start: int, chunk_len: int) -> None:
+        conn = conn_factory()
+        chunk = data[chunk_start: chunk_start + chunk_len]
+        if chunk.dtype != np.float32:
+            chunk = chunk.astype(np.float32)
+        ids   = np.arange(chunk_start, chunk_start + len(chunk), dtype=np.int32)
+        lbls  = labels[chunk_start: chunk_start + chunk_len]
+        buf   = pack_copy_binary_chunk_with_label(ids, chunk, lbls)
+        with conn.cursor().copy(
+            f"COPY {table_name} (id, embedding, filter_label) "
+            f"FROM STDIN WITH (FORMAT BINARY)"
+        ) as copy:
+            copy.write(buf)
+            while conn.pgconn.flush() == 1:
+                time.sleep(0)
+        conn.close()
+
+    if num_threads > 1:
+        threads, batch_rows = [], 0
+        for i in range(0, n, chunk_size):
+            chunk_len = min(chunk_size, n - i)
+            t = threading.Thread(target=_load_chunk, args=(i, chunk_len))
+            threads.append(t)
+            batch_rows += chunk_len
+            if len(threads) >= num_threads or (i + chunk_len) >= n:
+                for th in threads: th.start()
+                for th in threads: th.join()
+                if progress is not None: progress.update(batch_rows)
+                threads, batch_rows = [], 0
+    else:
+        for i in range(0, n, chunk_size):
+            chunk_len = min(chunk_size, n - i)
+            _load_chunk(i, chunk_len)
+            if progress is not None: progress.update(chunk_len)
+
+
 def load_vectors(
     conn_factory,
     table_name: str,

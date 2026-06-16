@@ -1,0 +1,44 @@
+vc-laion-5m-neutral-0.1pct:
+  mode: filtered
+  dataset: laion-5m-filtered-neutral
+  selectivity: 0.1
+  metric: ip
+  lists: [50, 8000]
+  samplingFactor: 256
+  residual_quantization: true
+  pg_parallel_workers: 32
+  top: 10
+  benchmarks:
+    10-20-1.9:  { nprob: "10,20",  epsilon: 1.9 }
+    25-50-1.9:  { nprob: "25,50",  epsilon: 1.9 }
+    50-100-1.9: { nprob: "50,100", epsilon: 1.9 }
+
+vc-laion-5m-neutral-1pct:
+  mode: filtered
+  dataset: laion-5m-filtered-neutral
+  selectivity: 1.0
+  metric: ip
+  lists: [50, 8000]
+  samplingFactor: 256
+  residual_quantization: true
+  pg_parallel_workers: 32
+  top: 10
+  benchmarks:
+    10-20-1.9:  { nprob: "10,20",  epsilon: 1.9 }
+    25-50-1.9:  { nprob: "25,50",  epsilon: 1.9 }
+    50-100-1.9: { nprob: "50,100", epsilon: 1.9 }
+
+vc-laion-5m-neutral-5pct:
+  mode: filtered
+  dataset: laion-5m-filtered-neutral
+  selectivity: 5.0
+  metric: ip
+  lists: [50, 8000]
+  samplingFactor: 256
+  residual_quantization: true
+  pg_parallel_workers: 32
+  top: 10
+  benchmarks:
+    10-20-1.9:  { nprob: "10,20",  epsilon: 1.9 }
+    25-50-1.9:  { nprob: "25,50",  epsilon: 1.9 }
+    50-100-1.9: { nprob: "50,100", epsilon: 1.9 }
