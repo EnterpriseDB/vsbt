@@ -152,16 +152,19 @@ def build_inverted_index(indptr, indices, n_tags: int):
 # Parallel GT computation
 # ---------------------------------------------------------------------------
 
+_CHUNK = 200   # queries per task; small enough for frequent progress updates
+
+
 def compute_filtered_gt(n_queries: int, top_k: int,
                         n_workers: int, selectivity_pct: float) -> tuple:
     """
-    Distribute queries across n_workers forked processes.
+    Distribute queries across n_workers forked processes in small chunks
+    so the progress bar updates frequently and workers stay balanced.
     Returns (gt int32 (n_queries, top_k), actual_selectivity_pct float).
     """
-    batch = max(1, n_queries // n_workers)
     tasks = [
-        (start, min(start + batch, n_queries), top_k)
-        for start in range(0, n_queries, batch)
+        (start, min(start + _CHUNK, n_queries), top_k)
+        for start in range(0, n_queries, _CHUNK)
     ]
 
     gt = np.full((n_queries, top_k), -1, dtype=np.int32)
