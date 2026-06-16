@@ -143,7 +143,7 @@ DATASETS = {
     },
 
     # --- Filtered Datasets (synthetic labels + pre-computed filtered GT) ---
-    # Each file contains neighbors_<sel>pct and filter_<sel>pct arrays.
+    # train vectors are loaded from source_dataset to avoid duplication.
     # Pass selectivity=<float> to get_dataset() to select the right GT.
     "yfcc-10m-filtered": {
         "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/yfcc-10m-filtered.hdf5",
@@ -151,10 +151,12 @@ DATASETS = {
         "metric": "l2",
         "dim": 192,
         "num": 10_000_000,
+        # YFCC train is embedded in the filtered HDF5 (no separate source)
     },
     "sift-1m-filtered-neutral": {
         "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/sift-128-euclidean-filtered-neutral.hdf5",
         "type": "filtered-hdf5",
+        "source_dataset": "sift-128-euclidean",
         "metric": "l2",
         "dim": 128,
         "num": 1_000_000,
@@ -162,6 +164,7 @@ DATASETS = {
     "sift-1m-filtered-anticorrelated": {
         "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/sift-128-euclidean-filtered-anticorrelated.hdf5",
         "type": "filtered-hdf5",
+        "source_dataset": "sift-128-euclidean",
         "metric": "l2",
         "dim": 128,
         "num": 1_000_000,
@@ -169,6 +172,7 @@ DATASETS = {
     "dbpedia-1m-filtered-neutral": {
         "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/dbpedia-openai-1000k-angular-filtered-neutral.hdf5",
         "type": "filtered-hdf5",
+        "source_dataset": "dbpedia-openai-1000k-angular",
         "metric": "cos",
         "dim": 1536,
         "num": 990_000,
@@ -176,6 +180,7 @@ DATASETS = {
     "dbpedia-1m-filtered-anticorrelated": {
         "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/dbpedia-openai-1000k-angular-filtered-anticorrelated.hdf5",
         "type": "filtered-hdf5",
+        "source_dataset": "dbpedia-openai-1000k-angular",
         "metric": "cos",
         "dim": 1536,
         "num": 990_000,
@@ -183,6 +188,7 @@ DATASETS = {
     "laion-5m-filtered-neutral": {
         "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion-5m-filtered-neutral.hdf5",
         "type": "filtered-hdf5",
+        "source_dataset": "laion-5m-test-ip",
         "metric": "ip",
         "dim": 768,
         "num": 5_000_000,
@@ -190,6 +196,7 @@ DATASETS = {
     "laion-5m-filtered-anticorrelated": {
         "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion-5m-filtered-anticorrelated.hdf5",
         "type": "filtered-hdf5",
+        "source_dataset": "laion-5m-test-ip",
         "metric": "ip",
         "dim": 768,
         "num": 5_000_000,
@@ -197,6 +204,7 @@ DATASETS = {
     "laion-20m-filtered-neutral": {
         "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion-20m-filtered-neutral.hdf5",
         "type": "filtered-hdf5",
+        "source_dataset": "laion-20m-test-ip",
         "metric": "ip",
         "dim": 768,
         "num": 20_000_000,
@@ -204,6 +212,7 @@ DATASETS = {
     "laion-20m-filtered-anticorrelated": {
         "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion-20m-filtered-anticorrelated.hdf5",
         "type": "filtered-hdf5",
+        "source_dataset": "laion-20m-test-ip",
         "metric": "ip",
         "dim": 768,
         "num": 20_000_000,
@@ -211,6 +220,7 @@ DATASETS = {
     "laion-100m-filtered-neutral": {
         "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion-100m-filtered-neutral.hdf5",
         "type": "filtered-hdf5",
+        "source_dataset": "laion-100m-test-ip",
         "metric": "ip",
         "dim": 768,
         "num": 100_000_000,
@@ -218,6 +228,7 @@ DATASETS = {
     "laion-100m-filtered-anticorrelated": {
         "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion-100m-filtered-anticorrelated.hdf5",
         "type": "filtered-hdf5",
+        "source_dataset": "laion-100m-test-ip",
         "metric": "ip",
         "dim": 768,
         "num": 100_000_000,
@@ -589,8 +600,17 @@ def _load_filtered_hdf5_dataset(name, info, selectivity):
             f"Available: {available}"
         )
 
-    dim = int(f.attrs.get("dim", f["train"].shape[1]))
-    num = f["train"].shape[0]
+    dim = info["dim"]
+    num = info["num"]
+
+    # train lives in the original source dataset to avoid duplication.
+    # Fall back to the filtered file itself for YFCC (no separate source).
+    src_name = info.get("source_dataset")
+    if src_name:
+        src_ds = _load_hdf5_dataset(src_name, DATASETS[src_name])
+        train = src_ds["train"]
+    else:
+        train = f["train"]
 
     return {
         "name": name,
@@ -598,7 +618,7 @@ def _load_filtered_hdf5_dataset(name, info, selectivity):
         "metric": info["metric"],
         "dim": dim,
         "num": num,
-        "train":         f["train"],
+        "train":         train,
         "test":          f["test"][:],
         "neighbors":     f[neighbors_key][:],
         "filter_labels": f[filter_key][:] if filter_key in f else None,

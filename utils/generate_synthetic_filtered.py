@@ -173,7 +173,7 @@ def main():
         print(f"\n=== {corr_type} → {out_path} ===")
 
         with h5py.File(out_path, "w") as hf:
-            hf.create_dataset("train",  data=train,   compression="lzf")
+            # train is not written — load from the original dataset at benchmark time.
             hf.create_dataset("test",   data=queries, compression="lzf")
             hf.attrs["metric"]      = metric
             hf.attrs["source"]      = args.dataset
