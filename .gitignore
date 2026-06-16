@@ -29,6 +29,10 @@ docs/
 # Planning docs
 PLAN.md
 
+# Ariadne (internal extension, kept in a separate private fork)
+ariadne_*.py
+config/**/ariadne-*.yaml
+
 # OS
 .DS_Store
 Thumbs.db

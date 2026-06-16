@@ -13,7 +13,6 @@ HUGEPAGE_SIZE_MB=2
 case "$(basename "$SUITE")" in
   pgvector*)    RUNNER="pgvector_suite.py" ;;
   vectorchord*) RUNNER="vectorchord_suite.py" ;;
-  ariadne*)     RUNNER="ariadne_suite.py" ;;
   *)            echo "Cannot infer suite from config: $SUITE"; exit 1 ;;
 esac
 
