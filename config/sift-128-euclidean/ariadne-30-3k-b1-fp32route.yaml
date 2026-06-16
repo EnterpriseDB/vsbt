@@ -1,0 +1,20 @@
+ariadne-sift-30-3k-b1-fp32route:
+  dataset: sift-128-euclidean
+  datasetType: hdf5
+  metric: l2
+  k_outer: 30
+  k_leaves: 3000
+  samplingFactor: 256
+  residual_quantization: true
+  bits_per_dim: 1
+  colocate_fp: fp16
+  use_bit_routing: false
+  rerank_k: 100
+  pg_parallel_workers: 32
+  top: 10
+  benchmarks:
+    "5-15":   { probes: "5,15"   }
+    "10-30":  { probes: "10,30"  }
+    "15-50":  { probes: "15,50"  }
+    "20-75":  { probes: "20,75"  }
+    "25-100": { probes: "25,100" }

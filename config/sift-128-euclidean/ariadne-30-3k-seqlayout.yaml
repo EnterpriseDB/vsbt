@@ -1,0 +1,23 @@
+ariadne-sift-30-3k-seqlayout:
+  dataset: sift-128-euclidean
+  datasetType: hdf5
+  metric: l2
+  k_outer: 30
+  k_leaves: 3000
+  samplingFactor: 256
+  residual_quantization: true
+  kmeans_iters: 15
+  bits_per_dim: 4
+  colocate_fp: fp16
+  pg_parallel_workers: 32
+  top: 10
+  # New defaults applied via code (2026-05-16): lowerbound static (always
+  # on), routing_refine_mult=10, plus rerank_k bumped 100 → 400 at the YAML
+  # level for the variant-sweep-validated recall lift.
+  rerank_k: 400
+  benchmarks:
+    "5-15":   { probes: "5,15"   }
+    "10-30":  { probes: "10,30"  }
+    "15-50":  { probes: "15,50"  }
+    "20-75":  { probes: "20,75"  }
+    "25-100": { probes: "25,100" }

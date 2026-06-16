@@ -1,0 +1,21 @@
+ariadne-laion-100m-570-320k:
+  dataset: laion-100m-test-ip
+  datasetType: hdf5
+  metric: dot
+  k_outer: 570
+  k_leaves: 320000
+  sampling_factor: 256
+  residual_quant: true
+  kmeans_iters: 15
+  bits_per_dim: 1
+  colocate_fp: fp16
+  query_bitquant: true
+  pg_parallel_workers: 31
+  top: 10
+  benchmarks:
+    "10-80":   { probes: "10,80"   }
+    "15-120":  { probes: "15,120"  }
+    "17-140":  { probes: "17,140"  }
+    "20-160":  { probes: "20,160"  }
+    "25-200":  { probes: "25,200"  }
+    "30-240":  { probes: "30,240"  }

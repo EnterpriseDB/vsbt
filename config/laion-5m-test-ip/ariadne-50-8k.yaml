@@ -1,0 +1,28 @@
+ariadne-laion-5m-50-8k:
+  dataset: laion-5m-test-ip
+  datasetType: hdf5
+  metric: dot
+  k_outer: 50
+  k_leaves: 8000
+  samplingFactor: 256
+  residual_quantization: true
+  bits_per_dim: 4
+  kmeans_iters: 15
+  rerank_k: 100
+  pg_parallel_workers: 32
+  top: 10
+  # probes pairs are "probes_outer,probes" — Ariadne converges much
+  # earlier than VectorChord, so the ladder is short and stops near 0.975.
+  benchmarks:
+    "5-16":
+      probes: "5,16"
+    "8-25":
+      probes: "8,25"
+    "13-44":
+      probes: "13,44"
+    "16-55":
+      probes: "16,55"
+    "22-75":
+      probes: "22,75"
+    "30-100":
+      probes: "30,100"

@@ -401,17 +401,14 @@ class ResultsManager:
                 ["M", str(config.get("m", "N/A"))],
                 ["EF Construction", str(config.get("efConstruction", "N/A"))],
             ])
-        elif suite_type in ("vectorchord", "pgpu"):
+        elif suite_type == "vectorchord":
             config_rows.extend([
                 ["Lists", str(config.get("lists", results.get("lists", "N/A")))],
                 ["Sampling Factor", str(config.get("samplingFactor", "N/A"))],
                 ["Residual Quantization", str(config.get("residual_quantization", "N/A"))],
+                ["Build Threads", str(results.get("build_threads", "N/A"))],
+                ["K-means Hierarchical", str(config.get("kmeans_hierarchical", "N/A"))],
             ])
-            if suite_type == "vectorchord":
-                config_rows.extend([
-                    ["Build Threads", str(results.get("build_threads", "N/A"))],
-                    ["K-means Hierarchical", str(config.get("kmeans_hierarchical", "N/A"))],
-                ])
         elif suite_type in ("pgvector-ivfflat", "pgvector-ivfflat-bq-rerank"):
             # New pgvector index types ship their own column specs; the
             # caller passes config_columns from the suite. Each entry is
