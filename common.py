@@ -759,6 +759,28 @@ class TestSuite:
             self.results[suite_name]["index_size"] = result[0]
         conn.close()
 
+    def verify_index_usage(self, table_name: str, dataset: dict, metric_ops: str, top: int, benchmark: dict):
+        """Run EXPLAIN on the search query and warn if no index scan is detected."""
+        query_sql, bind_fn = self.warmup_query(table_name, dataset, metric_ops, top, benchmark)
+        sample_query = dataset["test"][0]
+        conn = self.create_connection()
+        try:
+            self.apply_session_guc(conn, benchmark)
+            rows = conn.execute(f"EXPLAIN {query_sql}", bind_fn(sample_query)).fetchall()
+            plan_text = "\n".join(row[0] for row in rows)
+            plan_lower = plan_text.lower()
+            if "index scan" not in plan_lower and "index only scan" not in plan_lower:
+                print(f"WARNING: query plan does not use an index scan:")
+                print(plan_text)
+            else:
+                self.debug_log("EXPLAIN verified: query uses index scan")
+                if self.debug:
+                    print(plan_text)
+        except Exception as e:
+            self.debug_log(f"EXPLAIN verification failed: {e}")
+        finally:
+            conn.close()
+
     def sequential_bench(self, name: str, table_name: str, conn: psycopg.Connection, metric_ops: str, top: int,
                          benchmark: dict, dataset: dict) -> tuple[list[tuple[int, float]], str]:
         m = dataset["test"].shape[0]
@@ -998,7 +1020,14 @@ class TestSuite:
         else:
             self.prewarm_index(table_name)
 
-        for name, benchmark in self.config[suite_name]["benchmarks"].items():
+        benchmarks = self.config[suite_name]["benchmarks"]
+        first_benchmark = next(iter(benchmarks.values()), None)
+        if first_benchmark is not None:
+            metric_ops = self._get_metric_operator(dataset.get("metric", "cos"))
+            top = self.config[suite_name].get("top", 10)
+            self.verify_index_usage(table_name, dataset, metric_ops, top, first_benchmark)
+
+        for name, benchmark in benchmarks.items():
             print(f"Running benchmark: {benchmark}")
             result_dir = f"./results/{suite_name}/"
             os.makedirs(result_dir, exist_ok=True)
