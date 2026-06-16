@@ -308,7 +308,6 @@ class TestSuite:
         """Create a database connection."""
         conn = psycopg.Connection.connect(
             conninfo=self.url,
-            dbname="postgres",
             autocommit=True,
             **self.keepalive_kwargs,
         )
