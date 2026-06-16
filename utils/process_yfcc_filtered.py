@@ -2,31 +2,31 @@
 process_yfcc_filtered.py — One-time EC2 job to build yfcc-10m-filtered.hdf5.
 
 Reads raw files from /data/yfcc-10m (or --data-dir), computes exact
-filtered ground truth for each selectivity level using FAISS, and writes
-a self-contained HDF5 that vsbt can load like any other dataset.
+filtered ground truth for each selectivity level using per-query numpy
+L2 brute-force, and writes a self-contained HDF5 that vsbt can load
+like any other dataset.
 
 File formats (big-ann-benchmarks):
   .u8bin  : uint32 nrows, uint32 ncols, then nrows*ncols uint8
-  .ibin   : int32  nrows, int32  ncols, then nrows*ncols int32
   .spmat  : int64 nrow, int64 ncol, int64 nnz;
             (nrow+1)*int64 indptr; nnz*int32 indices; nnz*float32 data
-            (CSR, values are weights — for tag matching we treat as binary)
 
 Filter semantics (NeurIPS 2023): AND — a base vector matches query tags
 [t1, t2] only if it has BOTH t1 and t2.
 
 Usage (on EC2):
-  python utils/process_yfcc_filtered.py
+  python utils/process_yfcc_filtered.py --workers 32
   aws s3 cp yfcc-10m-filtered.hdf5 s3://enterprisedb-vector-datasets/
 
 Output: yfcc-10m-filtered.hdf5
   train                  float32  (10M, 192)
   test                   float32  (100K, 192)
   neighbors_<sel>pct     int32    (100K, 100)   — filtered GT
-  selectivities                                 — attrs recording actual values
 """
 
 import argparse
+import multiprocessing as mp
+import os
 import struct
 import time
 from pathlib import Path
@@ -38,6 +38,14 @@ from tqdm import tqdm
 
 SELECTIVITIES = [0.1, 1.0, 5.0, 10.0, 30.0]
 TOP_K = 100
+
+# Module-level globals inherited by worker processes via fork (Linux COW).
+# Set once in main() before the Pool is created — never written by workers.
+_BASE = None
+_QUERIES = None
+_INV_INDEX = None
+_Q_INDPTR = None
+_Q_INDICES = None
 
 
 # ---------------------------------------------------------------------------
@@ -57,81 +65,115 @@ def read_spmat(path: Path):
         nrow, ncol, nnz = struct.unpack("<qqq", f.read(24))
         indptr  = np.frombuffer(f.read((nrow + 1) * 8), dtype=np.int64)
         indices = np.frombuffer(f.read(nnz * 4),        dtype=np.int32)
-        # values (float32) — treat as binary for tag matching, skip
-        f.read(nnz * 4)
+        f.read(nnz * 4)   # skip float32 values — treated as binary
     return indptr, indices, (int(nrow), int(ncol))
 
 
 # ---------------------------------------------------------------------------
-# Filtered GT computation
+# Per-query L2 nearest neighbours (no per-query FAISS index)
 # ---------------------------------------------------------------------------
 
 def _l2_top_k(sub: np.ndarray, q: np.ndarray, k: int) -> np.ndarray:
     """
-    Return indices of the k nearest rows in sub to query vector q (L2).
-
-    Uses the identity ||a-b||² = ||a||² - 2a·b + ||b||² to avoid
-    allocating a full (M, D) difference matrix. The inner sub @ q is a
-    BLAS dgemv — fast for any M.
+    Indices of the k nearest rows in sub to q (L2).
+    Uses ||a-b||² = ||a||² - 2a·b + ||b||² to avoid a full diff allocation.
     """
-    sub_sq = np.einsum('ij,ij->i', sub, sub)          # (M,)
+    sub_sq = np.einsum('ij,ij->i', sub, sub)
     dists  = sub_sq - 2.0 * (sub @ q) + float(np.dot(q, q))
     k = min(k, len(dists))
     part = np.argpartition(dists, k - 1)[:k]
     return part[np.argsort(dists[part])]
 
 
+# ---------------------------------------------------------------------------
+# Worker — runs in a forked child process, reads globals as COW shared memory
+# ---------------------------------------------------------------------------
+
+def _worker(args):
+    """Process a contiguous slice of queries. Returns (qi_start, partial_gt, match_count)."""
+    qi_start, qi_end, top_k = args
+
+    base      = _BASE
+    queries   = _QUERIES
+    inv_index = _INV_INDEX
+    q_indptr  = _Q_INDPTR
+    q_indices = _Q_INDICES
+
+    n = qi_end - qi_start
+    gt = np.full((n, top_k), -1, dtype=np.int32)
+    total_matches = 0
+
+    for bi, qi in enumerate(range(qi_start, qi_end)):
+        q_tags = q_indices[q_indptr[qi]: q_indptr[qi + 1]]
+        if len(q_tags) == 0:
+            continue
+
+        # AND: intersect posting lists, smallest first for speed
+        tag_order = sorted(range(len(q_tags)), key=lambda i: len(inv_index[q_tags[i]]))
+        matching = inv_index[q_tags[tag_order[0]]]
+        for i in tag_order[1:]:
+            matching = np.intersect1d(matching, inv_index[q_tags[i]], assume_unique=True)
+            if len(matching) == 0:
+                break
+
+        if len(matching) == 0:
+            continue
+
+        k = min(top_k, len(matching))
+        sub = base[matching]
+        positions = _l2_top_k(sub, queries[qi], k)
+        gt[bi, :k] = matching[positions]
+        total_matches += len(matching)
+
+    return qi_start, gt, total_matches
+
+
+# ---------------------------------------------------------------------------
+# Inverted index build
+# ---------------------------------------------------------------------------
+
 def build_inverted_index(indptr, indices, n_tags: int):
-    """Build tag→list[base_id] inverted index from CSR matrix."""
     print("Building inverted tag index...", flush=True)
     inv = [[] for _ in range(n_tags)]
     n_base = len(indptr) - 1
     for base_id in tqdm(range(n_base), desc="  Inverted index", ncols=80):
         for tag_id in indices[indptr[base_id]: indptr[base_id + 1]]:
             inv[tag_id].append(base_id)
-    # Convert to sorted numpy arrays for fast intersection
-    inv_np = [np.array(v, dtype=np.int32) for v in inv]
-    return inv_np
+    return [np.array(v, dtype=np.int32) for v in inv]
 
 
-def compute_filtered_gt_fast(base: np.ndarray, queries: np.ndarray,
-                              base_indptr, base_indices,
-                              query_indptr, query_indices,
-                              inv_index,
-                              selectivity_pct: float,
-                              top_k: int = TOP_K) -> tuple:
+# ---------------------------------------------------------------------------
+# Parallel GT computation
+# ---------------------------------------------------------------------------
+
+def compute_filtered_gt(n_queries: int, top_k: int,
+                        n_workers: int, selectivity_pct: float) -> tuple:
     """
-    Compute filtered GT using a per-tag inverted index (AND semantics).
-
-    Returns (gt, actual_selectivity_pct).
+    Distribute queries across n_workers forked processes.
+    Returns (gt int32 (n_queries, top_k), actual_selectivity_pct float).
     """
-    n_queries = queries.shape[0]
+    batch = max(1, n_queries // n_workers)
+    tasks = [
+        (start, min(start + batch, n_queries), top_k)
+        for start in range(0, n_queries, batch)
+    ]
+
     gt = np.full((n_queries, top_k), -1, dtype=np.int32)
-    total_match_count = 0
+    total_matches = 0
+    done = 0
 
-    for qi in tqdm(range(n_queries), desc=f"  GT@{selectivity_pct}%", ncols=80):
-        q_tags = query_indices[query_indptr[qi]: query_indptr[qi + 1]]
-        if len(q_tags) == 0:
-            continue
+    ctx = mp.get_context("fork")
+    with ctx.Pool(processes=n_workers) as pool:
+        bar = tqdm(total=n_queries, desc=f"  GT@{selectivity_pct}%", ncols=80)
+        for qi_start, partial_gt, matches in pool.imap_unordered(_worker, tasks):
+            n = partial_gt.shape[0]
+            gt[qi_start: qi_start + n] = partial_gt
+            total_matches += matches
+            done += n
+            bar.update(n)
+        bar.close()
 
-        # Intersect posting lists (AND)
-        matching = inv_index[q_tags[0]]
-        for tag_id in q_tags[1:]:
-            matching = np.intersect1d(matching, inv_index[tag_id], assume_unique=True)
-
-        if len(matching) < top_k:
-            if len(matching) > 0:
-                positions = _l2_top_k(base[matching], queries[qi], len(matching))
-                gt[qi, :len(positions)] = matching[positions]
-            continue
-
-        total_match_count += len(matching)
-
-        sub = base[matching]  # float32 already
-        positions = _l2_top_k(sub, queries[qi], top_k)
-        gt[qi] = matching[positions]
-
-    actual_sel = total_match_count / (n_queries * base.shape[0]) * 100
+    actual_sel = total_matches / (n_queries * _BASE.shape[0]) * 100
     return gt, actual_sel
 
 
@@ -141,9 +183,11 @@ def compute_filtered_gt_fast(base: np.ndarray, queries: np.ndarray,
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data-dir",  default="/data/yfcc-10m")
-    parser.add_argument("--out",       default="yfcc-10m-filtered.hdf5")
-    parser.add_argument("--top-k",     type=int, default=TOP_K)
+    parser.add_argument("--data-dir", default="/data/yfcc-10m")
+    parser.add_argument("--out",      default="yfcc-10m-filtered.hdf5")
+    parser.add_argument("--top-k",    type=int, default=TOP_K)
+    parser.add_argument("--workers",  type=int, default=os.cpu_count(),
+                        help="Parallel worker processes (default: all cores)")
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir)
@@ -162,9 +206,21 @@ def main():
 
     print("Loading query metadata (.spmat)...")
     q_indptr, q_indices, q_shape = read_spmat(data_dir / "query.metadata.public.100K.spmat")
-    print(f"  query metadata: {q_shape[0]} queries, tags vocab={b_shape[1]}")
+    print(f"  query metadata: {q_shape[0]} queries")
 
+    print("Building inverted tag index...")
     inv_index = build_inverted_index(b_indptr, b_indices, n_tags=b_shape[1])
+
+    # Set globals before forking so workers inherit them via COW
+    global _BASE, _QUERIES, _INV_INDEX, _Q_INDPTR, _Q_INDICES
+    _BASE      = base
+    _QUERIES   = queries
+    _INV_INDEX = inv_index
+    _Q_INDPTR  = q_indptr
+    _Q_INDICES = q_indices
+
+    n_queries = queries.shape[0]
+    print(f"\nUsing {args.workers} worker processes")
 
     with h5py.File(args.out, "w") as hf:
         hf.create_dataset("train", data=base,    compression="lzf")
@@ -174,13 +230,8 @@ def main():
 
         for sel in SELECTIVITIES:
             t0 = time.perf_counter()
-            gt, actual_sel = compute_filtered_gt_fast(
-                base, queries,
-                b_indptr, b_indices,
-                q_indptr, q_indices,
-                inv_index,
-                selectivity_pct=sel,
-                top_k=args.top_k,
+            gt, actual_sel = compute_filtered_gt(
+                n_queries, args.top_k, args.workers, sel
             )
             elapsed = time.perf_counter() - t0
             key = f"neighbors_{sel}pct".replace(".", "_")
@@ -190,7 +241,6 @@ def main():
             print(f"  {key}: actual_sel={actual_sel:.2f}%  ({elapsed:.0f}s)")
 
     print(f"\nWrote {args.out}")
-    print(f"Upload with:")
     print(f"  aws s3 cp {args.out} s3://enterprisedb-vector-datasets/")
 
 
