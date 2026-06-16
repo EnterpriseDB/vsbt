@@ -258,7 +258,7 @@ def main():
         hf.attrs["n_base"]   = n_base
 
     print(f"\nWrote {args.out}")
-    print(f"  aws s3 cp {args.out} s3://enterprisedb-vector-datasets/")
+    print(f"  aws s3 cp {args.out} s3://enterprisedb-vector-datasets/yfcc/10m/filtered.hdf5")
 
 
 if __name__ == "__main__":

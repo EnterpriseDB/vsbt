@@ -14,49 +14,49 @@ DATA_DIR = os.environ.get("DATASET_LOCAL_DIR", "./datasets")
 DATASETS = {
     # --- Standard HDF5 Datasets ---
     "laion-5m-test-ip": {
-        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion-5m-test-ip.hdf5",
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion/5m/base.hdf5",
         "metric": "ip",
         "type": "hdf5",
         "dim": 768,
         "num": 5_000_000
     },
     "laion-20m-test-ip": {
-        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion-20m-test-ip.hdf5",
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion/20m/base.hdf5",
         "metric": "ip",
         "type": "hdf5",
         "dim": 768,
         "num": 20_000_000
     },
     "laion-100m-test-ip": {
-        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion-100m-test-ip.hdf5",
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion/100m/base.hdf5",
         "metric": "ip",
         "type": "hdf5",
         "dim": 768,
         "num": 100_000_000
     },
     "sift-128-euclidean": {
-        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/sift-128-euclidean.hdf5",
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/sift/1m/base.hdf5",
         "metric": "l2",
         "type": "hdf5",
         "dim": 128,
         "num": 1_000_000
     },
     "glove-100-angular": {
-        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/glove-100-angular.hdf5",
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/glove/1m/base.hdf5",
         "metric": "cos",
         "type": "hdf5",
         "dim": 100,
         "num": 1_183_514
     },
     "gist-960-euclidean": {
-        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/gist-960-euclidean.hdf5",
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/gist/1m/base.hdf5",
         "metric": "l2",
         "type": "hdf5",
         "dim": 960,
         "num": 1_000_000
     },
     "dbpedia-openai-1000k-angular": {
-        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/dbpedia-openai-1000k-angular.hdf5",
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/dbpedia/1m/base.hdf5",
         "metric": "cos",
         "type": "hdf5",
         "dim": 1536,
@@ -70,9 +70,8 @@ DATASETS = {
         "parts": 409,
         "dim": 512,
         "num": 400_000_000,
-        "base_dir": os.path.join(DATA_DIR, "laion-400m/"),
-        # Link to the file you just salvaged and uploaded
-        "gt_url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion/laion_400m_gt.npy",
+        "base_dir": os.path.join(DATA_DIR, "laion/400m/parts/"),
+        "gt_url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion/400m/gt.npy",
         "gt_file": "laion_400m_gt.npy"
     },
 
@@ -82,79 +81,78 @@ DATASETS = {
         "metric": "cos",
         "dim": 1536,
         "num": 500_000,
-        "s3_prefix": "s3://enterprisedb-vector-datasets/openai/openai_medium_500k",
-        "base_dir": os.path.join(DATA_DIR, "openai/openai_medium_500k"),
+        "s3_prefix": "s3://enterprisedb-vector-datasets/openai/500k",
+        "base_dir": os.path.join(DATA_DIR, "openai/500k"),
     },
     "openai-1m-cos": {
         "type": "parquet",
         "metric": "cos",
         "dim": 1536,
         "num": 1_000_000,
-        "s3_prefix": "s3://enterprisedb-vector-datasets/openai/openai_small_1m",
-        "base_dir": os.path.join(DATA_DIR, "openai/openai_small_1m"),
+        "s3_prefix": "s3://enterprisedb-vector-datasets/openai/1m",
+        "base_dir": os.path.join(DATA_DIR, "openai/1m"),
     },
     "openai-2m-cos": {
         "type": "parquet",
         "metric": "cos",
         "dim": 1536,
         "num": 2_000_000,
-        "s3_prefix": "s3://enterprisedb-vector-datasets/openai/openai_medium_2m",
-        "base_dir": os.path.join(DATA_DIR, "openai/openai_medium_2m"),
+        "s3_prefix": "s3://enterprisedb-vector-datasets/openai/2m",
+        "base_dir": os.path.join(DATA_DIR, "openai/2m"),
     },
     "openai-5m-cos": {
         "type": "parquet",
         "metric": "cos",
         "dim": 1536,
         "num": 5_000_000,
-        "s3_prefix": "s3://enterprisedb-vector-datasets/openai/openai_large_5m",
-        "base_dir": os.path.join(DATA_DIR, "openai/openai_large_5m"),
+        "s3_prefix": "s3://enterprisedb-vector-datasets/openai/5m",
+        "base_dir": os.path.join(DATA_DIR, "openai/5m"),
     },
     "cohere-1m-cos": {
         "type": "parquet",
         "metric": "cos",
         "dim": 768,
         "num": 1_000_000,
-        "s3_prefix": "s3://enterprisedb-vector-datasets/cohere/cohere_medium_1m",
-        "base_dir": os.path.join(DATA_DIR, "cohere/cohere_medium_1m"),
+        "s3_prefix": "s3://enterprisedb-vector-datasets/cohere/1m",
+        "base_dir": os.path.join(DATA_DIR, "cohere/1m"),
     },
     "cohere-2m-cos": {
         "type": "parquet",
         "metric": "cos",
         "dim": 768,
         "num": 2_000_000,
-        "s3_prefix": "s3://enterprisedb-vector-datasets/cohere/cohere_small_2m",
-        "base_dir": os.path.join(DATA_DIR, "cohere/cohere_small_2m"),
+        "s3_prefix": "s3://enterprisedb-vector-datasets/cohere/2m",
+        "base_dir": os.path.join(DATA_DIR, "cohere/2m"),
     },
     "cohere-3m-cos": {
         "type": "parquet",
         "metric": "cos",
         "dim": 768,
         "num": 3_000_000,
-        "s3_prefix": "s3://enterprisedb-vector-datasets/cohere/cohere_medium_3m",
-        "base_dir": os.path.join(DATA_DIR, "cohere/cohere_medium_3m"),
+        "s3_prefix": "s3://enterprisedb-vector-datasets/cohere/3m",
+        "base_dir": os.path.join(DATA_DIR, "cohere/3m"),
     },
     "cohere-10m-cos": {
         "type": "parquet",
         "metric": "cos",
         "dim": 768,
         "num": 10_000_000,
-        "s3_prefix": "s3://enterprisedb-vector-datasets/cohere/cohere_large_10m",
-        "base_dir": os.path.join(DATA_DIR, "cohere/cohere_large_10m"),
+        "s3_prefix": "s3://enterprisedb-vector-datasets/cohere/10m",
+        "base_dir": os.path.join(DATA_DIR, "cohere/10m"),
     },
 
     # --- Filtered Datasets (synthetic labels + pre-computed filtered GT) ---
     # train vectors are loaded from source_dataset to avoid duplication.
     # Pass selectivity=<float> to get_dataset() to select the right GT.
     "yfcc-10m-filtered": {
-        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/yfcc-10m-filtered.hdf5",
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/yfcc/10m/filtered.hdf5",
         "type": "filtered-hdf5",
         "metric": "l2",
         "dim": 192,
         "num": 10_000_000,
-        # YFCC train is embedded in the filtered HDF5 (no separate source)
     },
     "sift-1m-filtered-neutral": {
-        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/sift-128-euclidean-filtered-neutral.hdf5",
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/sift/1m/filtered-neutral.hdf5",
         "type": "filtered-hdf5",
         "source_dataset": "sift-128-euclidean",
         "metric": "l2",
@@ -162,7 +160,7 @@ DATASETS = {
         "num": 1_000_000,
     },
     "sift-1m-filtered-anticorrelated": {
-        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/sift-128-euclidean-filtered-anticorrelated.hdf5",
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/sift/1m/filtered-anticorrelated.hdf5",
         "type": "filtered-hdf5",
         "source_dataset": "sift-128-euclidean",
         "metric": "l2",
@@ -170,7 +168,7 @@ DATASETS = {
         "num": 1_000_000,
     },
     "dbpedia-1m-filtered-neutral": {
-        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/dbpedia-openai-1000k-angular-filtered-neutral.hdf5",
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/dbpedia/1m/filtered-neutral.hdf5",
         "type": "filtered-hdf5",
         "source_dataset": "dbpedia-openai-1000k-angular",
         "metric": "cos",
@@ -178,7 +176,7 @@ DATASETS = {
         "num": 990_000,
     },
     "dbpedia-1m-filtered-anticorrelated": {
-        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/dbpedia-openai-1000k-angular-filtered-anticorrelated.hdf5",
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/dbpedia/1m/filtered-anticorrelated.hdf5",
         "type": "filtered-hdf5",
         "source_dataset": "dbpedia-openai-1000k-angular",
         "metric": "cos",
@@ -186,7 +184,7 @@ DATASETS = {
         "num": 990_000,
     },
     "laion-5m-filtered-neutral": {
-        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion-5m-filtered-neutral.hdf5",
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion/5m/filtered-neutral.hdf5",
         "type": "filtered-hdf5",
         "source_dataset": "laion-5m-test-ip",
         "metric": "ip",
@@ -194,7 +192,7 @@ DATASETS = {
         "num": 5_000_000,
     },
     "laion-5m-filtered-anticorrelated": {
-        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion-5m-filtered-anticorrelated.hdf5",
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion/5m/filtered-anticorrelated.hdf5",
         "type": "filtered-hdf5",
         "source_dataset": "laion-5m-test-ip",
         "metric": "ip",
@@ -202,7 +200,7 @@ DATASETS = {
         "num": 5_000_000,
     },
     "laion-20m-filtered-neutral": {
-        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion-20m-filtered-neutral.hdf5",
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion/20m/filtered-neutral.hdf5",
         "type": "filtered-hdf5",
         "source_dataset": "laion-20m-test-ip",
         "metric": "ip",
@@ -210,7 +208,7 @@ DATASETS = {
         "num": 20_000_000,
     },
     "laion-20m-filtered-anticorrelated": {
-        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion-20m-filtered-anticorrelated.hdf5",
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion/20m/filtered-anticorrelated.hdf5",
         "type": "filtered-hdf5",
         "source_dataset": "laion-20m-test-ip",
         "metric": "ip",
@@ -218,7 +216,7 @@ DATASETS = {
         "num": 20_000_000,
     },
     "laion-100m-filtered-neutral": {
-        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion-100m-filtered-neutral.hdf5",
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion/100m/filtered-neutral.hdf5",
         "type": "filtered-hdf5",
         "source_dataset": "laion-100m-test-ip",
         "metric": "ip",
@@ -226,7 +224,7 @@ DATASETS = {
         "num": 100_000_000,
     },
     "laion-100m-filtered-anticorrelated": {
-        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion-100m-filtered-anticorrelated.hdf5",
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion/100m/filtered-anticorrelated.hdf5",
         "type": "filtered-hdf5",
         "source_dataset": "laion-100m-test-ip",
         "metric": "ip",
@@ -240,18 +238,16 @@ DATASETS = {
         "metric": "l2",
         "dim": 96,
         "num": 1_000_000_000,
-        "base_dir": os.path.join(DATA_DIR, "deep1b"),
-        # Direct URLs to your pre-converted NPY files and the IBIN ground truth
+        "base_dir": os.path.join(DATA_DIR, "deep1b/1b"),
         "urls": {
-            "base": "https://enterprisedb-vector-datasets.s3.amazonaws.com/deep1B/deep1b_base.npy",
-            "query": "https://enterprisedb-vector-datasets.s3.amazonaws.com/deep1B/deep1b_queries.npy",
-            "groundtruth": "https://enterprisedb-vector-datasets.s3.amazonaws.com/deep1B/deep1b_groundtruth.npy"
+            "base":        "https://enterprisedb-vector-datasets.s3.amazonaws.com/deep1b/1b/base.npy",
+            "query":       "https://enterprisedb-vector-datasets.s3.amazonaws.com/deep1b/1b/queries.npy",
+            "groundtruth": "https://enterprisedb-vector-datasets.s3.amazonaws.com/deep1b/1b/groundtruth.npy"
         },
-        # Local filenames to save them as
         "files": {
-            "base": "deep1b_base.npy",
-            "query": "deep1b_queries.npy",
-            "groundtruth": "deep1b_groundtruth.npy"
+            "base":        "base.npy",
+            "query":       "queries.npy",
+            "groundtruth": "groundtruth.npy"
         }
     }
 }

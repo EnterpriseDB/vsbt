@@ -202,8 +202,11 @@ def main():
                 print(f"    actual_sel={actual_sel:.2f}%  GT done in {elapsed:.1f}s")
 
         size_mb = out_path.stat().st_size / 1024 / 1024
+        # Derive S3 key from source dataset name, e.g.:
+        #   laion-5m-test-ip  + neutral  → laion/5m/filtered-neutral.hdf5
+        #   sift-128-euclidean + anticor → sift/1m/filtered-anticorrelated.hdf5
         print(f"  Wrote {out_path}  ({size_mb:.0f} MB)")
-        print(f"  Upload: aws s3 cp {out_path} s3://enterprisedb-vector-datasets/")
+        print(f"  Upload: aws s3 cp {out_path} s3://enterprisedb-vector-datasets/<dataset>/<size>/filtered-{corr_type}.hdf5")
 
 
 if __name__ == "__main__":
