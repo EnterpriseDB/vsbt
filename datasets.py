@@ -326,8 +326,7 @@ def download_laion_parts(limit=409, max_workers=None):
 
 def _load_hdf5_dataset(name, info):
     """Handles standard HDF5 benchmark datasets."""
-    file_name = Path(info["url"]).name
-    file_path = os.path.join(DATA_DIR, file_name)
+    file_path = os.path.join(DATA_DIR, f"{name}.hdf5")
     download_http_file(info["url"], file_path)
 
     f = h5py.File(file_path, "r")
@@ -579,8 +578,7 @@ def _load_filtered_hdf5_dataset(name, info, selectivity):
             "Pass selectivity=<float> to get_dataset(), e.g. selectivity=1.0"
         )
 
-    file_name = Path(info["url"]).name
-    file_path = os.path.join(DATA_DIR, file_name)
+    file_path = os.path.join(DATA_DIR, f"{name}.hdf5")
     download_http_file(info["url"], file_path)
 
     sel_key = f"{selectivity}pct".replace(".", "_")
