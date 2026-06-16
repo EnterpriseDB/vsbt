@@ -142,6 +142,87 @@ DATASETS = {
         "base_dir": os.path.join(DATA_DIR, "cohere/cohere_large_10m"),
     },
 
+    # --- Filtered Datasets (synthetic labels + pre-computed filtered GT) ---
+    # Each file contains neighbors_<sel>pct and filter_<sel>pct arrays.
+    # Pass selectivity=<float> to get_dataset() to select the right GT.
+    "yfcc-10m-filtered": {
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/yfcc-10m-filtered.hdf5",
+        "type": "filtered-hdf5",
+        "metric": "l2",
+        "dim": 192,
+        "num": 10_000_000,
+    },
+    "sift-1m-filtered-neutral": {
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/sift-128-euclidean-filtered-neutral.hdf5",
+        "type": "filtered-hdf5",
+        "metric": "l2",
+        "dim": 128,
+        "num": 1_000_000,
+    },
+    "sift-1m-filtered-anticorrelated": {
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/sift-128-euclidean-filtered-anticorrelated.hdf5",
+        "type": "filtered-hdf5",
+        "metric": "l2",
+        "dim": 128,
+        "num": 1_000_000,
+    },
+    "dbpedia-1m-filtered-neutral": {
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/dbpedia-openai-1000k-angular-filtered-neutral.hdf5",
+        "type": "filtered-hdf5",
+        "metric": "cos",
+        "dim": 1536,
+        "num": 990_000,
+    },
+    "dbpedia-1m-filtered-anticorrelated": {
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/dbpedia-openai-1000k-angular-filtered-anticorrelated.hdf5",
+        "type": "filtered-hdf5",
+        "metric": "cos",
+        "dim": 1536,
+        "num": 990_000,
+    },
+    "laion-5m-filtered-neutral": {
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion-5m-filtered-neutral.hdf5",
+        "type": "filtered-hdf5",
+        "metric": "ip",
+        "dim": 768,
+        "num": 5_000_000,
+    },
+    "laion-5m-filtered-anticorrelated": {
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion-5m-filtered-anticorrelated.hdf5",
+        "type": "filtered-hdf5",
+        "metric": "ip",
+        "dim": 768,
+        "num": 5_000_000,
+    },
+    "laion-20m-filtered-neutral": {
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion-20m-filtered-neutral.hdf5",
+        "type": "filtered-hdf5",
+        "metric": "ip",
+        "dim": 768,
+        "num": 20_000_000,
+    },
+    "laion-20m-filtered-anticorrelated": {
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion-20m-filtered-anticorrelated.hdf5",
+        "type": "filtered-hdf5",
+        "metric": "ip",
+        "dim": 768,
+        "num": 20_000_000,
+    },
+    "laion-100m-filtered-neutral": {
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion-100m-filtered-neutral.hdf5",
+        "type": "filtered-hdf5",
+        "metric": "ip",
+        "dim": 768,
+        "num": 100_000_000,
+    },
+    "laion-100m-filtered-anticorrelated": {
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion-100m-filtered-anticorrelated.hdf5",
+        "type": "filtered-hdf5",
+        "metric": "ip",
+        "dim": 768,
+        "num": 100_000_000,
+    },
+
     # --- Deep1B Configuration ---
     "deep1b-test-l2": {
         "type": "deep1b-mmap",
@@ -477,19 +558,71 @@ def _load_parquet(name, info):
     }
 
 
+def _load_filtered_hdf5_dataset(name, info, selectivity):
+    """
+    Load a pre-computed filtered benchmark dataset.
+
+    selectivity: float — target selectivity percentage (e.g. 1.0 for 1%).
+                 Must match one of the values used when generating the file.
+    Returns the standard dataset dict plus 'filter_labels' (int8 array).
+    """
+    if selectivity is None:
+        raise ValueError(
+            f"Dataset '{name}' is a filtered dataset. "
+            "Pass selectivity=<float> to get_dataset(), e.g. selectivity=1.0"
+        )
+
+    file_name = Path(info["url"]).name
+    file_path = os.path.join(DATA_DIR, file_name)
+    download_http_file(info["url"], file_path)
+
+    sel_key = f"{selectivity}pct".replace(".", "_")
+    neighbors_key = f"neighbors_{sel_key}"
+    filter_key    = f"filter_{sel_key}"
+
+    f = h5py.File(file_path, "r")
+
+    if neighbors_key not in f:
+        available = [k for k in f.keys() if k.startswith("neighbors_")]
+        raise ValueError(
+            f"selectivity={selectivity}% not found in {file_name}. "
+            f"Available: {available}"
+        )
+
+    dim = int(f.attrs.get("dim", f["train"].shape[1]))
+    num = f["train"].shape[0]
+
+    return {
+        "name": name,
+        "type": "filtered-hdf5",
+        "metric": info["metric"],
+        "dim": dim,
+        "num": num,
+        "train":         f["train"],
+        "test":          f["test"][:],
+        "neighbors":     f[neighbors_key][:],
+        "filter_labels": f[filter_key][:] if filter_key in f else None,
+    }
+
+
 # --- FACTORY FUNCTION ---
 
-def get_dataset(dataset_name):
-    """Factory function to get a standardized dataset object."""
+def get_dataset(dataset_name, selectivity=None):
+    """Factory function to get a standardized dataset object.
+
+    selectivity: only required for filtered-hdf5 datasets. Pass the
+                 target selectivity percentage, e.g. selectivity=1.0.
+    """
     if dataset_name not in DATASETS:
         raise ValueError(f"Unknown dataset: {dataset_name}. Available: {list(DATASETS.keys())}")
 
     info = DATASETS[dataset_name]
     dtype = info.get("type", "hdf5")
 
-
     if dtype == "hdf5":
         return _load_hdf5_dataset(dataset_name, info)
+    elif dtype == "filtered-hdf5":
+        return _load_filtered_hdf5_dataset(dataset_name, info, selectivity)
     elif dtype == "laion-multipart":
         return _load_laion_multipart(dataset_name, info)
     elif dtype == "deep1b-mmap":

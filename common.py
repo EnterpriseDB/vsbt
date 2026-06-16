@@ -1085,7 +1085,8 @@ class TestSuite:
             self.pg_stats_collector.capture_snapshot("baseline", table_name)
 
         # 1. LOAD DATASET (Unified)
-        ds = datasets.get_dataset(dataset_name)
+        selectivity = self.config[name].get("selectivity")
+        ds = datasets.get_dataset(dataset_name, selectivity=selectivity)
         # Compatibility mapping
         ds["answer"] = ds.pop("neighbors")
 
