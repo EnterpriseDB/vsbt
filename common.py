@@ -13,6 +13,7 @@ import yaml
 from tqdm import tqdm
 
 import datasets
+from loader import load_vectors, load_vectors_generator
 from monitor import (
     SystemMonitor,
     PGStatsCollector,
@@ -548,69 +549,24 @@ class TestSuite:
         chunk_size = self.chunk_size if self.chunk_size else 100_000
         num_threads = self.max_load_threads or 1
 
+        pbar = tqdm(desc="Adding embeddings", total=n, unit=" rows", ncols=80, unit_scale=True)
+
         if is_sliceable:
-            # === SLICEABLE PATH (HDF5, Deep1B mmap) ===
-            def load_chunk(chunk_start, chunk_len):
-                t_conn = self.create_connection()
-                chunk_data = data[chunk_start: chunk_start + chunk_len]
-
-                # Cast if needed
-                if chunk_data.dtype != np.float32:
-                    chunk_data = chunk_data.astype(np.float32)
-
-                with t_conn.cursor().copy(
-                        f"COPY {table_name} (id, embedding) FROM STDIN WITH (FORMAT BINARY)"
-                ) as copy:
-                    copy.set_types(["integer", "vector"])
-                    for i, vec in enumerate(chunk_data):
-                        copy.write_row((chunk_start + i, vec))
-                    while t_conn.pgconn.flush() == 1:
-                        time.sleep(0)
-                t_conn.close()
-
-            pbar = tqdm(desc="Adding embeddings", total=n, unit=" rows", ncols=80, unit_scale=True)
-
-            if num_threads > 1:
-                threads = []
-                batch_rows = 0
-                for i in range(0, n, chunk_size):
-                    chunk_len = min(chunk_size, n - i)
-                    t = threading.Thread(target=load_chunk, args=(i, chunk_len))
-                    threads.append(t)
-                    batch_rows += chunk_len
-
-                    if len(threads) >= num_threads or (i + chunk_len) >= n:
-                        for thread in threads:
-                            thread.start()
-                        for thread in threads:
-                            thread.join()
-                        pbar.update(batch_rows)
-                        threads = []
-                        batch_rows = 0
-            else:
-                for i in range(0, n, chunk_size):
-                    chunk_len = min(chunk_size, n - i)
-                    load_chunk(i, chunk_len)
-                    pbar.update(chunk_len)
-
-            pbar.close()
-
+            load_vectors(
+                conn_factory=self.create_connection,
+                table_name=table_name,
+                data=data,
+                n=n,
+                chunk_size=chunk_size,
+                num_threads=num_threads,
+                progress=pbar,
+            )
         else:
-            # === GENERATOR PATH (LAION) ===
             conn = self.create_connection()
-            pbar = tqdm(desc="Adding embeddings", total=n, unit=" rows", ncols=80, unit_scale=True)
-
-            with conn.cursor().copy(
-                    f"COPY {table_name} (id, embedding) FROM STDIN WITH (FORMAT BINARY)"
-            ) as copy:
-                copy.set_types(["integer", "vector"])
-                for i, vec in data:
-                    copy.write_row((i, vec))
-                    while conn.pgconn.flush() == 1:
-                        time.sleep(0)
-                    pbar.update(1)
+            load_vectors_generator(conn, table_name, data, n, progress=pbar)
             conn.close()
-            pbar.close()
+
+        pbar.close()
 
         end_time = time.perf_counter()
         self.results[suite_name]["load_time"] = int(round(end_time - start_time))
