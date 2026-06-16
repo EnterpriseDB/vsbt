@@ -593,18 +593,27 @@ def _load_filtered_hdf5_dataset(name, info, selectivity):
 
     f = h5py.File(file_path, "r")
 
-    if neighbors_key not in f:
-        available = [k for k in f.keys() if k.startswith("neighbors_")]
-        raise ValueError(
-            f"selectivity={selectivity}% not found in {file_name}. "
-            f"Available: {available}"
-        )
+    # YFCC: single neighbors array + match_counts for selectivity filtering.
+    # Synthetic: per-selectivity neighbors_Xpct + filter_Xpct arrays.
+    if "neighbors" in f:
+        # YFCC-style: one GT, query subset chosen by match_counts at bench time
+        neighbors    = f["neighbors"][:]
+        filter_labels = None
+        match_counts = f["match_counts"][:] if "match_counts" in f else None
+    else:
+        if neighbors_key not in f:
+            available = [k for k in f.keys() if k.startswith("neighbors_")]
+            raise ValueError(
+                f"selectivity={selectivity}% not found in {file_name}. "
+                f"Available: {available}"
+            )
+        neighbors    = f[neighbors_key][:]
+        filter_labels = f[filter_key][:] if filter_key in f else None
+        match_counts  = None
 
     dim = info["dim"]
     num = info["num"]
 
-    # train lives in the original source dataset to avoid duplication.
-    # Fall back to the filtered file itself for YFCC (no separate source).
     src_name = info.get("source_dataset")
     if src_name:
         src_ds = _load_hdf5_dataset(src_name, DATASETS[src_name])
@@ -613,15 +622,16 @@ def _load_filtered_hdf5_dataset(name, info, selectivity):
         train = f["train"]
 
     return {
-        "name": name,
-        "type": "filtered-hdf5",
-        "metric": info["metric"],
-        "dim": dim,
-        "num": num,
+        "name":          name,
+        "type":          "filtered-hdf5",
+        "metric":        info["metric"],
+        "dim":           dim,
+        "num":           num,
         "train":         train,
         "test":          f["test"][:],
-        "neighbors":     f[neighbors_key][:],
-        "filter_labels": f[filter_key][:] if filter_key in f else None,
+        "neighbors":     neighbors,
+        "filter_labels": filter_labels,
+        "match_counts":  match_counts,
     }
 
 

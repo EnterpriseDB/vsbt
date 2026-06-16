@@ -19,9 +19,16 @@ Usage (on EC2):
   aws s3 cp yfcc-10m-filtered.hdf5 s3://enterprisedb-vector-datasets/
 
 Output: yfcc-10m-filtered.hdf5
-  train                  float32  (10M, 192)
-  test                   float32  (100K, 192)
-  neighbors_<sel>pct     int32    (100K, 100)   — filtered GT
+  train          float32  (10M, 192)
+  test           float32  (100K, 192)
+  neighbors      int32    (100K, 100)  — filtered GT (computed once; GT is
+                                         determined by each query's tags, not
+                                         by a selectivity parameter)
+  match_counts   int32    (100K,)      — actual matching set size per query;
+                                         use to select queries at benchmark
+                                         time: e.g. keep queries where
+                                         match_counts / 10M is in [0.5%, 2%]
+                                         for a ~1% selectivity benchmark
 """
 
 import argparse
@@ -96,7 +103,7 @@ def _l2_top_k(sub: np.ndarray, q: np.ndarray, k: int) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 def _worker(args):
-    """Process a contiguous slice of queries. Returns (qi_start, partial_gt, match_count)."""
+    """Process a chunk of queries. Returns (qi_start, partial_gt, per_query_match_counts)."""
     qi_start, qi_end, top_k = args
 
     base      = _BASE
@@ -106,15 +113,15 @@ def _worker(args):
     q_indices = _Q_INDICES
 
     n = qi_end - qi_start
-    gt = np.full((n, top_k), -1, dtype=np.int32)
-    total_matches = 0
+    gt           = np.full((n, top_k), -1, dtype=np.int32)
+    match_counts = np.zeros(n, dtype=np.int32)
 
     for bi, qi in enumerate(range(qi_start, qi_end)):
         q_tags = q_indices[q_indptr[qi]: q_indptr[qi + 1]]
         if len(q_tags) == 0:
             continue
 
-        # AND: intersect posting lists, smallest first for speed
+        # AND: intersect posting lists, smallest first
         tag_order = sorted(range(len(q_tags)), key=lambda i: len(inv_index[q_tags[i]]))
         matching = inv_index[q_tags[tag_order[0]]]
         for i in tag_order[1:]:
@@ -125,13 +132,13 @@ def _worker(args):
         if len(matching) == 0:
             continue
 
-        k = min(top_k, len(matching))
+        match_counts[bi] = len(matching)
+        k   = min(top_k, len(matching))
         sub = base[matching]
         positions = _l2_top_k(sub, queries[qi], k)
         gt[bi, :k] = matching[positions]
-        total_matches += len(matching)
 
-    return qi_start, gt, total_matches
+    return qi_start, gt, match_counts
 
 
 # ---------------------------------------------------------------------------
@@ -155,35 +162,32 @@ def build_inverted_index(indptr, indices, n_tags: int):
 _CHUNK = 200   # queries per task; small enough for frequent progress updates
 
 
-def compute_filtered_gt(n_queries: int, top_k: int,
-                        n_workers: int, selectivity_pct: float) -> tuple:
+def compute_filtered_gt(n_queries: int, top_k: int, n_workers: int) -> tuple:
     """
-    Distribute queries across n_workers forked processes in small chunks
-    so the progress bar updates frequently and workers stay balanced.
-    Returns (gt int32 (n_queries, top_k), actual_selectivity_pct float).
+    Compute GT once for all queries. Each query's GT is determined solely
+    by its tag filter — selectivity is an output, not an input.
+
+    Returns (gt int32 (n_queries, top_k), match_counts int32 (n_queries,)).
     """
     tasks = [
         (start, min(start + _CHUNK, n_queries), top_k)
         for start in range(0, n_queries, _CHUNK)
     ]
 
-    gt = np.full((n_queries, top_k), -1, dtype=np.int32)
-    total_matches = 0
-    done = 0
+    gt           = np.full((n_queries, top_k), -1, dtype=np.int32)
+    match_counts = np.zeros(n_queries, dtype=np.int32)
 
     ctx = mp.get_context("fork")
     with ctx.Pool(processes=n_workers) as pool:
-        bar = tqdm(total=n_queries, desc=f"  GT@{selectivity_pct}%", ncols=80)
-        for qi_start, partial_gt, matches in pool.imap_unordered(_worker, tasks):
+        bar = tqdm(total=n_queries, desc="  Computing GT", ncols=80)
+        for qi_start, partial_gt, partial_counts in pool.imap_unordered(_worker, tasks):
             n = partial_gt.shape[0]
-            gt[qi_start: qi_start + n] = partial_gt
-            total_matches += matches
-            done += n
+            gt[qi_start: qi_start + n]           = partial_gt
+            match_counts[qi_start: qi_start + n] = partial_counts
             bar.update(n)
         bar.close()
 
-    actual_sel = total_matches / (n_queries * _BASE.shape[0]) * 100
-    return gt, actual_sel
+    return gt, match_counts
 
 
 # ---------------------------------------------------------------------------
@@ -232,23 +236,26 @@ def main():
     n_queries = queries.shape[0]
     print(f"\nUsing {args.workers} worker processes")
 
-    with h5py.File(args.out, "w") as hf:
-        hf.create_dataset("train", data=base,    compression="lzf")
-        hf.create_dataset("test",  data=queries, compression="lzf")
-        hf.attrs["metric"] = "l2"
-        hf.attrs["dim"]    = int(base.shape[1])
+    t0 = time.perf_counter()
+    gt, match_counts = compute_filtered_gt(n_queries, args.top_k, args.workers)
+    elapsed = time.perf_counter() - t0
 
-        for sel in SELECTIVITIES:
-            t0 = time.perf_counter()
-            gt, actual_sel = compute_filtered_gt(
-                n_queries, args.top_k, args.workers, sel
-            )
-            elapsed = time.perf_counter() - t0
-            key = f"neighbors_{sel}pct".replace(".", "_")
-            hf.create_dataset(key, data=gt, compression="lzf")
-            hf[key].attrs["target_selectivity_pct"] = sel
-            hf[key].attrs["actual_selectivity_pct"] = actual_sel
-            print(f"  {key}: actual_sel={actual_sel:.2f}%  ({elapsed:.0f}s)")
+    n_base = base.shape[0]
+    sel_pcts = match_counts / n_base * 100
+    print(f"\n  Done in {elapsed:.0f}s")
+    print(f"  Selectivity distribution across queries:")
+    for lo, hi in [(0, 0.5), (0.5, 2), (2, 7), (7, 15), (15, 100)]:
+        n = int(((sel_pcts >= lo) & (sel_pcts < hi)).sum())
+        print(f"    [{lo:.1f}%, {hi:.0f}%): {n:,} queries")
+
+    with h5py.File(args.out, "w") as hf:
+        hf.create_dataset("train",        data=base,         compression="lzf")
+        hf.create_dataset("test",         data=queries,      compression="lzf")
+        hf.create_dataset("neighbors",    data=gt,           compression="lzf")
+        hf.create_dataset("match_counts", data=match_counts, compression="lzf")
+        hf.attrs["metric"]   = "l2"
+        hf.attrs["dim"]      = int(base.shape[1])
+        hf.attrs["n_base"]   = n_base
 
     print(f"\nWrote {args.out}")
     print(f"  aws s3 cp {args.out} s3://enterprisedb-vector-datasets/")
