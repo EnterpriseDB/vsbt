@@ -31,7 +31,6 @@ import struct
 import time
 from pathlib import Path
 
-import faiss
 import h5py
 import numpy as np
 from tqdm import tqdm
@@ -67,44 +66,19 @@ def read_spmat(path: Path):
 # Filtered GT computation
 # ---------------------------------------------------------------------------
 
-def compute_filtered_gt(base: np.ndarray, queries: np.ndarray,
-                        base_indptr, base_indices,
-                        query_indptr, query_indices,
-                        selectivity_pct: float,
-                        top_k: int = TOP_K) -> np.ndarray:
+def _l2_top_k(sub: np.ndarray, q: np.ndarray, k: int) -> np.ndarray:
     """
-    For each query, find its tag filter, identify matching base vectors
-    (AND semantics), compute exact FAISS nearest neighbours within that set.
+    Return indices of the k nearest rows in sub to query vector q (L2).
 
-    Returns gt: (n_queries, top_k) int32 — base row IDs.
+    Uses the identity ||a-b||² = ||a||² - 2a·b + ||b||² to avoid
+    allocating a full (M, D) difference matrix. The inner sub @ q is a
+    BLAS dgemv — fast for any M.
     """
-    n_queries = queries.shape[0]
-    gt = np.full((n_queries, top_k), -1, dtype=np.int32)
-
-    hits = 0
-    miss = 0
-
-    for qi in tqdm(range(n_queries), desc=f"  GT@{selectivity_pct}%", ncols=80):
-        # Tags for this query
-        q_tags = set(
-            query_indices[query_indptr[qi]: query_indptr[qi + 1]].tolist()
-        )
-        if not q_tags:
-            miss += 1
-            continue
-
-        # Base vectors that have ALL query tags (AND semantics)
-        # Start from smallest tag set to minimise work
-        tag_list = sorted(q_tags)
-        # For each tag, collect base vector IDs that have it
-        # We use the transpose: tag→base_ids would require an inverted index.
-        # For 10M base with sparse tags we scan in chunks using the CSR.
-        # Practical shortcut: for each base vector check if it contains all tags.
-        # This is O(N) per query — too slow for 100K queries × 10M base.
-        # Instead we build a per-tag inverted index once (below this function).
-        raise RuntimeError("Use compute_filtered_gt_with_invindex instead")
-
-    return gt
+    sub_sq = np.einsum('ij,ij->i', sub, sub)          # (M,)
+    dists  = sub_sq - 2.0 * (sub @ q) + float(np.dot(q, q))
+    k = min(k, len(dists))
+    part = np.argpartition(dists, k - 1)[:k]
+    return part[np.argsort(dists[part])]
 
 
 def build_inverted_index(indptr, indices, n_tags: int):
@@ -146,24 +120,16 @@ def compute_filtered_gt_fast(base: np.ndarray, queries: np.ndarray,
             matching = np.intersect1d(matching, inv_index[tag_id], assume_unique=True)
 
         if len(matching) < top_k:
-            # Not enough candidates; record what we have
             if len(matching) > 0:
-                sub = base[matching]
-                q = queries[qi: qi + 1].astype(np.float32)
-                dists = np.sum((sub - q) ** 2, axis=1)
-                order = np.argsort(dists)[:top_k]
-                gt[qi, :len(order)] = matching[order]
+                positions = _l2_top_k(base[matching], queries[qi], len(matching))
+                gt[qi, :len(positions)] = matching[positions]
             continue
 
         total_match_count += len(matching)
 
-        # FAISS brute-force on matching subset
-        sub = base[matching].astype(np.float32)
-        index = faiss.IndexFlatL2(sub.shape[1])
-        index.add(sub)
-        q = queries[qi: qi + 1].astype(np.float32)
-        _, positions = index.search(q, top_k)
-        gt[qi] = matching[positions[0]]
+        sub = base[matching]  # float32 already
+        positions = _l2_top_k(sub, queries[qi], top_k)
+        gt[qi] = matching[positions]
 
     actual_sel = total_match_count / (n_queries * base.shape[0]) * 100
     return gt, actual_sel
