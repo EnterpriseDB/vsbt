@@ -17,6 +17,7 @@ vsbt dependencies.
 YAML config example (workload key added to standard suite config):
 
   vc-laion-5m-workload:
+    mode: workload           # triggers this runner (default: readonly)
     dataset: laion-5m-test-ip
     metric: dot
     lists: [50, 8000]
@@ -34,6 +35,10 @@ YAML config example (workload key added to standard suite config):
       "10-20-1.9":
         nprob: "10,20"
         epsilon: 1.9
+
+The suite runners (pgvector_suite.py, vectorchord_suite.py) dispatch to
+run_workload() automatically when they see mode: workload.  This script
+can also be run standalone with the same YAML.
 """
 
 import argparse

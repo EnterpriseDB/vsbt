@@ -1182,6 +1182,13 @@ class TestSuite:
             self._system_report_content = generate_system_report()
 
         for suite_name in self.config:
-            print(f"Running test: {suite_name}")
-            self.run_suite(suite_name)
+            mode = self.config[suite_name].get("mode", "readonly")
+            print(f"Running test: {suite_name} (mode={mode})")
+            if mode == "workload":
+                from workload import run_workload
+                run_workload(suite_name, self.config[suite_name], self.url,
+                             chunk_size=self.chunk_size,
+                             num_threads=self.max_load_threads)
+            else:
+                self.run_suite(suite_name)
         self.generate_markdown_result()
