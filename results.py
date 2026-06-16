@@ -501,6 +501,13 @@ class ResultsManager:
         if pg_stats:
             lines.extend(["", "---", "", pg_stats])
 
+        # --- Non-default PostgreSQL settings ---
+        pg_nondefault = results.get("pg_settings_nondefault")
+        if pg_nondefault:
+            lines.extend(["", "---", "", "## Non-default PostgreSQL Settings", "",
+                          "*Full dump saved to `pg_settings.csv` in this run directory.*", ""])
+            lines.extend(format_markdown_table(["Setting", "Value", "Source"], pg_nondefault))
+
         return "\n".join(lines)
 
     def generate_markdown_report(

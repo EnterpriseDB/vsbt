@@ -1054,6 +1054,29 @@ class TestSuite:
         except psycopg.Error:
             pass
 
+        # Capture non-default settings and write full pg_settings.csv
+        try:
+            import csv as _csv
+            all_settings = conn.execute(
+                "SELECT name, setting, unit, source FROM pg_settings ORDER BY name"
+            ).fetchall()
+            settings_dir = f"./results/{name}"
+            os.makedirs(settings_dir, exist_ok=True)
+            with open(f"{settings_dir}/pg_settings.csv", "w", newline="") as _f:
+                w = _csv.writer(_f)
+                w.writerow(["name", "setting", "unit", "source"])
+                for row in all_settings:
+                    w.writerow(row)
+            nondefault = [
+                [r[0], f"{r[1]}{r[2] or ''}", r[3]]
+                for r in all_settings
+                if r[3] not in ("default", "client")
+            ]
+            if nondefault:
+                self.results[name]["pg_settings_nondefault"] = nondefault
+        except Exception:
+            pass
+
         # Initialize PG stats collector
         self.pg_stats_collector = PGStatsCollector(conn)
 
