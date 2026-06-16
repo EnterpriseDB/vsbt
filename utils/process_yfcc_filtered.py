@@ -31,6 +31,12 @@ import struct
 import time
 from pathlib import Path
 
+# Prevent numpy/BLAS from spawning threads inside each worker.
+# Must be set before numpy is imported in the worker processes.
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+
 import h5py
 import numpy as np
 from tqdm import tqdm
@@ -186,8 +192,9 @@ def main():
     parser.add_argument("--data-dir", default="/data/yfcc-10m")
     parser.add_argument("--out",      default="yfcc-10m-filtered.hdf5")
     parser.add_argument("--top-k",    type=int, default=TOP_K)
-    parser.add_argument("--workers",  type=int, default=os.cpu_count(),
-                        help="Parallel worker processes (default: all cores)")
+    parser.add_argument("--workers",  type=int,
+                        default=min(os.cpu_count() or 1, 32),
+                        help="Parallel worker processes (default: min(cpu_count, 32))")
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir)
