@@ -33,6 +33,11 @@ PLAN.md
 ariadne_*.py
 config/**/ariadne-*.yaml
 
+# Other internal / scratch files
+blog_companion.html
+pgd-lab/
+monitor/peak_memory.py
+
 # OS
 .DS_Store
 Thumbs.db
