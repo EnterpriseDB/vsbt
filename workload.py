@@ -302,9 +302,9 @@ def run_workload(suite_name: str, config: dict, url: str,
     # --- Table setup ---
     conn.execute(f"DROP TABLE IF EXISTS {table_name}")
     conn.execute(f"CREATE TABLE {table_name} (id INTEGER PRIMARY KEY, embedding vector({ds['dim']}))")
-    if not autovacuum:
-        conn.execute(f"ALTER TABLE {table_name} SET (autovacuum_enabled = false)")
-        print("autovacuum disabled for this table")
+    av_value = "true" if autovacuum else "false"
+    conn.execute(f"ALTER TABLE {table_name} SET (autovacuum_enabled = {av_value})")
+    print(f"autovacuum {'enabled' if autovacuum else 'disabled'} for this table")
 
     # --- Initial load at start_pct ---
     n_start = int(N * start_pct / 100)
@@ -407,8 +407,7 @@ def run_workload(suite_name: str, config: dict, url: str,
             all_results.append(row)
 
     csv_file.close()
-    if not autovacuum:
-        conn.execute(f"ALTER TABLE {table_name} RESET (autovacuum_enabled)")
+    conn.execute(f"ALTER TABLE {table_name} RESET (autovacuum_enabled)")
     conn.close()
     print(f"\nResults written to {results_path}")
 
