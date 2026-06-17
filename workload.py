@@ -308,7 +308,7 @@ def run_workload(suite_name: str, config: dict, url: str,
     del_ratio   = workload_cfg.get("delete_ratio", 0.0)
     autovacuum  = workload_cfg.get("autovacuum", True)
     rng_seed    = workload_cfg.get("rng_seed", 0)
-    gt_workers  = workload_cfg.get("gt_workers", min(os.cpu_count() or 1, 8))
+    gt_workers  = workload_cfg.get("gt_workers", 1)
 
     if abs(ins_ratio + del_ratio - 1.0) > 1e-9:
         print(
