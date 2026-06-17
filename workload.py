@@ -175,18 +175,29 @@ def create_index(conn, table_name: str, config: dict, pg_parallel_workers: int =
     metric = config["metric"]
 
     if "lists" in config:
-        # VectorChord vchordrq
+        # VectorChord vchordrq — uses TOML options block, not flat WITH params
         lists = config["lists"]
+        lists_str = f"[{lists[0]}, {lists[1]}]" if isinstance(lists, list) else str(lists)
         metric_ops_map = {"l2": "vector_l2_ops", "euclidean": "vector_l2_ops",
                           "cos": "vector_cosine_ops", "ip": "vector_ip_ops", "dot": "vector_ip_ops"}
         ops = metric_ops_map[metric]
         sf = config.get("samplingFactor", 256)
-        rq = config.get("residual_quantization", True)
-        lists_str = f"[{lists[0]}, {lists[1]}]" if isinstance(lists, list) else str(lists)
+        rq = "true" if config.get("residual_quantization", True) else "false"
+        build_threads = config.get("build_threads", 1)
+        spherical = "true" if metric in ("cos", "dot", "ip") else "false"
+        ivf_config = (
+            f"residual_quantization = {rq}\n"
+            f"build.pin = 2\n"
+            f"\n"
+            f"[build.internal]\n"
+            f"lists = {lists_str}\n"
+            f"build_threads = {build_threads}\n"
+            f"spherical_centroids = {spherical}\n"
+            f"sampling_factor = {sf}\n"
+        )
         sql = (
             f"CREATE INDEX ON {table_name} USING vchordrq (embedding {ops}) "
-            f"WITH (lists = '{lists_str}', sampling_factor = {sf}, "
-            f"residual_quantization = {str(rq).lower()})"
+            f"WITH (options = $${ivf_config}$$)"
         )
     elif "m" in config:
         # pgvector HNSW
