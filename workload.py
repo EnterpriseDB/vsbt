@@ -294,9 +294,17 @@ def run_workload(suite_name: str, config: dict, url: str,
     metric_op   = _metric_op(metric)
 
     ds = datasets.get_dataset(config["dataset"])
-    train = ds["train"]
     queries = ds["test"].astype(np.float32)
     N = ds["num"]
+
+    # Preload train into a numpy array so live_ids fancy-indexing is fast.
+    # Random HDF5 access with non-contiguous live_ids (after deletes) is
+    # I/O-bound and single-threaded; a numpy array makes each checkpoint's
+    # vector load a vectorized in-memory op.
+    print("Preloading train vectors into memory...")
+    train = ds["train"][:].astype(np.float32)
+    print(f"Train loaded: {train.shape[0]:,} × {train.shape[1]} "
+          f"({train.nbytes / 2**30:.1f} GB)")
 
     table_name = suite_name.replace("-", "_")
 
