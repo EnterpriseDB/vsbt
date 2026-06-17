@@ -277,6 +277,13 @@ def run_workload(suite_name: str, config: dict, url: str,
     del_ratio   = workload_cfg.get("delete_ratio", 0.0)
     autovacuum  = workload_cfg.get("autovacuum", True)
     rng_seed    = workload_cfg.get("rng_seed", 0)
+
+    if abs(ins_ratio + del_ratio - 1.0) > 1e-9:
+        print(
+            f"Error: insert_ratio ({ins_ratio}) + delete_ratio ({del_ratio}) "
+            f"= {ins_ratio + del_ratio:.4f}, must sum to 1.0. Aborting."
+        )
+        return
     metric      = config["metric"]
     top_k       = config.get("top", 10)
     benchmarks  = config.get("benchmarks", {})
