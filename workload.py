@@ -34,6 +34,7 @@ YAML config example (workload key added to standard suite config):
       delete_ratio: 0.3    # fraction of step rows that are deletes
       autovacuum: false    # disable autovacuum during the run
       rng_seed: 0          # seed for delete selection (reproducibility)
+      gt_workers: 8        # parallel workers for FAISS GT search (fork/COW)
     benchmarks:
       "10-20-1.9":
         nprob: "10,20"
@@ -57,6 +58,8 @@ recomputed.  Delete the gt_cache/ directory to force recomputation.
 
 import argparse
 import csv
+import multiprocessing as mp
+import os
 import time
 from pathlib import Path
 
@@ -95,16 +98,33 @@ def _metric_op(metric: str) -> str:
 # Ground-truth computation
 # ---------------------------------------------------------------------------
 
+# Module-level state set in the parent before forking; workers inherit via COW.
+_gt_index = None
+_gt_live_ids = None
+
+
+def _gt_worker(args):
+    """Search one query shard against the inherited FAISS index."""
+    q_chunk, k = args
+    os.environ["OMP_NUM_THREADS"] = "1"   # prevent BLAS over-subscription per worker
+    _, pos = _gt_index.search(q_chunk, k)
+    return _gt_live_ids[pos]
+
+
 def compute_gt(live_ids: np.ndarray, train_data, queries: np.ndarray,
-               top_k: int, metric: str) -> np.ndarray:
+               top_k: int, metric: str, n_workers: int = 1) -> np.ndarray:
     """
     Compute exact nearest-neighbour ground truth using FAISS brute-force.
 
-    live_ids: sorted int32 array of live row IDs  (FAISS position i → DB id live_ids[i])
-    train_data: sliceable dataset array           (train_data[id] = float32 vector)
-    queries: (n_queries, D) float32
+    live_ids:  sorted int32 array of live row IDs (FAISS position i → DB id live_ids[i])
+    train_data: sliceable dataset array            (train_data[id] = float32 vector)
+    queries:   (n_queries, D) float32
+    n_workers: number of forked processes for parallel query search (fork/COW —
+               the FAISS index is built once and inherited read-only by workers)
     Returns gt: (n_queries, top_k) int32 — DB row IDs for each query's neighbours
     """
+    global _gt_index, _gt_live_ids
+
     vecs = train_data[live_ids]
     if vecs.dtype != np.float32:
         vecs = vecs.astype(np.float32)
@@ -125,9 +145,20 @@ def compute_gt(live_ids: np.ndarray, train_data, queries: np.ndarray,
         index = faiss.IndexFlatL2(D)
         index.add(vecs)
 
-    _, positions = index.search(q, top_k)       # positions within vecs
-    gt = live_ids[positions]                     # map back to DB ids
-    return gt
+    if n_workers <= 1:
+        _, positions = index.search(q, top_k)
+        return live_ids[positions]
+
+    # Parallel search: set module globals, fork workers that inherit via COW.
+    _gt_index = index
+    _gt_live_ids = live_ids
+    chunks = np.array_split(q, n_workers)
+    ctx = mp.get_context("fork")
+    with ctx.Pool(n_workers) as pool:
+        parts = pool.map(_gt_worker, [(c, top_k) for c in chunks])
+    _gt_index = None   # release reference
+    _gt_live_ids = None
+    return np.vstack(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -277,6 +308,7 @@ def run_workload(suite_name: str, config: dict, url: str,
     del_ratio   = workload_cfg.get("delete_ratio", 0.0)
     autovacuum  = workload_cfg.get("autovacuum", True)
     rng_seed    = workload_cfg.get("rng_seed", 0)
+    gt_workers  = workload_cfg.get("gt_workers", min(os.cpu_count() or 1, 8))
 
     if abs(ins_ratio + del_ratio - 1.0) > 1e-9:
         print(
@@ -386,8 +418,8 @@ def run_workload(suite_name: str, config: dict, url: str,
         if gt is not None:
             print("  Ground truth loaded from cache.")
         else:
-            print("  Computing ground truth (FAISS brute-force)...")
-            gt = compute_gt(live_ids, train, queries, top_k, metric)
+            print(f"  Computing ground truth (FAISS brute-force, {gt_workers} workers)...")
+            gt = compute_gt(live_ids, train, queries, top_k, metric, n_workers=gt_workers)
             _save_gt_cache(gt_cache_dir, checkpoint_pct, live_ids, gt)
 
         # Run each benchmark point
