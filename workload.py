@@ -7,9 +7,11 @@ Models a production index under continuous write pressure:
   2. At each checkpoint (step_pct% increments up to 100%):
        - Insert insert_ratio * step_rows new vectors.
        - Delete delete_ratio * step_rows random live vectors.
-       - Recompute exact ground truth with FAISS against the live set.
+       - Recompute exact ground truth with FAISS against the live set,
+         or load it from the per-checkpoint cache on re-runs.
        - Run each configured benchmark point and record recall/QPS.
   3. Write per-checkpoint results to workload_results.csv.
+  4. Print a summary table with drift% vs. the first checkpoint.
 
 Requires 'faiss' (faiss-cpu or faiss-gpu) installed alongside the usual
 vsbt dependencies.
@@ -31,6 +33,7 @@ YAML config example (workload key added to standard suite config):
       insert_ratio: 0.7    # fraction of step rows that are inserts
       delete_ratio: 0.3    # fraction of step rows that are deletes
       autovacuum: false    # disable autovacuum during the run
+      rng_seed: 0          # seed for delete selection (reproducibility)
     benchmarks:
       "10-20-1.9":
         nprob: "10,20"
@@ -39,6 +42,17 @@ YAML config example (workload key added to standard suite config):
 The suite runners (pgvector_suite.py, vectorchord_suite.py) dispatch to
 run_workload() automatically when they see mode: workload.  This script
 can also be run standalone with the same YAML.
+
+GT caching
+----------
+Ground truth is expensive (FAISS brute-force over all live vectors).
+After the first run, GT arrays are cached to
+  results/{suite_name}/gt_cache/gt_{pct}pct.npy
+  results/{suite_name}/gt_cache/live_ids_{pct}pct.npy
+
+On re-runs, if the cached live_ids match the current live set (which is
+guaranteed when rng_seed is fixed), the GT is loaded from disk instead of
+recomputed.  Delete the gt_cache/ directory to force recomputation.
 """
 
 import argparse
@@ -114,6 +128,38 @@ def compute_gt(live_ids: np.ndarray, train_data, queries: np.ndarray,
     _, positions = index.search(q, top_k)       # positions within vecs
     gt = live_ids[positions]                     # map back to DB ids
     return gt
+
+
+# ---------------------------------------------------------------------------
+# GT cache helpers
+# ---------------------------------------------------------------------------
+
+def _gt_cache_paths(cache_dir: Path, checkpoint_pct: int):
+    return (cache_dir / f"gt_{checkpoint_pct}pct.npy",
+            cache_dir / f"live_ids_{checkpoint_pct}pct.npy")
+
+
+def _load_gt_cache(cache_dir: Path, checkpoint_pct: int,
+                   live_ids: np.ndarray, top_k: int):
+    """Return cached GT array if live_ids match, else None."""
+    gt_path, ids_path = _gt_cache_paths(cache_dir, checkpoint_pct)
+    if not (gt_path.exists() and ids_path.exists()):
+        return None
+    cached_ids = np.load(ids_path)
+    if cached_ids.shape != live_ids.shape or not np.array_equal(cached_ids, live_ids):
+        return None
+    gt = np.load(gt_path)
+    if gt.shape[1] < top_k:
+        return None
+    return gt[:, :top_k]
+
+
+def _save_gt_cache(cache_dir: Path, checkpoint_pct: int,
+                   live_ids: np.ndarray, gt: np.ndarray) -> None:
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    gt_path, ids_path = _gt_cache_paths(cache_dir, checkpoint_pct)
+    np.save(ids_path, live_ids)
+    np.save(gt_path, gt)
 
 
 # ---------------------------------------------------------------------------
@@ -208,6 +254,40 @@ def run_benchmark_point(conn, table_name: str, queries: np.ndarray, gt: np.ndarr
 
 
 # ---------------------------------------------------------------------------
+# Summary table
+# ---------------------------------------------------------------------------
+
+def _print_summary(suite_name: str, all_results: list) -> None:
+    print(f"\n{'=' * 72}")
+    print(f"Workload Summary: {suite_name}")
+    print(f"{'=' * 72}")
+
+    # Group by benchmark name preserving insertion order
+    benches: dict[str, list] = {}
+    for r in all_results:
+        benches.setdefault(r["benchmark"], []).append(r)
+
+    for bench_name, rows in benches.items():
+        print(f"\nBenchmark: {bench_name}")
+        print(f"{'chkpt%':>7}  {'n_live':>10}  {'recall':>8}  {'recall_Δ':>9}  "
+              f"{'qps':>8}  {'qps_Δ':>8}  {'p50_ms':>7}  {'p99_ms':>7}")
+        print("-" * 72)
+        base_recall = rows[0]["recall"]
+        base_qps    = rows[0]["qps"]
+        for i, row in enumerate(rows):
+            if i == 0:
+                r_drift = "baseline"
+                q_drift = "baseline"
+            else:
+                r_drift = f"{(row['recall'] - base_recall) / (base_recall or 1) * 100:+.2f}%"
+                q_drift = f"{(row['qps']    - base_qps)    / (base_qps    or 1) * 100:+.2f}%"
+            print(f"{row['checkpoint_pct']:>7}  {row['n_live']:>10,}  "
+                  f"{row['recall']:>8.4f}  {r_drift:>9}  "
+                  f"{row['qps']:>8.1f}  {q_drift:>8}  "
+                  f"{row['p50_ms']:>7.2f}  {row['p99_ms']:>7.2f}")
+
+
+# ---------------------------------------------------------------------------
 # Main workload runner
 # ---------------------------------------------------------------------------
 
@@ -219,6 +299,7 @@ def run_workload(suite_name: str, config: dict, url: str,
     ins_ratio   = workload_cfg.get("insert_ratio", 1.0)
     del_ratio   = workload_cfg.get("delete_ratio", 0.0)
     autovacuum  = workload_cfg.get("autovacuum", True)
+    rng_seed    = workload_cfg.get("rng_seed", 0)
     metric      = config["metric"]
     top_k       = config.get("top", 10)
     benchmarks  = config.get("benchmarks", {})
@@ -261,14 +342,19 @@ def run_workload(suite_name: str, config: dict, url: str,
     # --- Result collection ---
     results_path = Path(f"./results/{suite_name}/workload_results.csv")
     results_path.parent.mkdir(parents=True, exist_ok=True)
+    gt_cache_dir = results_path.parent / "gt_cache"
+
     csv_fields = ["checkpoint_pct", "n_live", "benchmark", "recall", "qps", "p50_ms", "p99_ms"]
     csv_file = open(results_path, "w", newline="")
     writer = csv.DictWriter(csv_file, fieldnames=csv_fields)
     writer.writeheader()
 
+    all_results = []   # for end-of-run summary
+
     # --- Checkpoints: start_pct, start_pct+step, ..., 100 ---
     next_insert_id = n_start
     live_set = set(live_ids.tolist())
+    rng = np.random.default_rng(seed=rng_seed)
 
     checkpoints = list(range(start_pct, 101, step_pct))
     if checkpoints[0] != start_pct:
@@ -294,14 +380,13 @@ def run_workload(suite_name: str, config: dict, url: str,
                     live_set.add(new_id)
                 next_insert_id += n_insert
 
-            # Delete random live vectors
+            # Delete random live vectors (deterministic via rng_seed)
             if n_delete > 0 and live_set:
                 n_delete = min(n_delete, len(live_set))
-                to_delete = list(live_set)
-                import random as _random
-                to_delete = _random.sample(to_delete, n_delete)
+                live_arr = np.array(sorted(live_set), dtype=np.int32)
+                del_indices = rng.choice(len(live_arr), size=n_delete, replace=False)
+                to_delete = live_arr[del_indices].tolist()
                 print(f"  Deleting {n_delete:,} vectors...")
-                # Delete in batches to avoid overly large IN clauses
                 batch = 10_000
                 for start in range(0, len(to_delete), batch):
                     ids_batch = to_delete[start: start + batch]
@@ -314,28 +399,37 @@ def run_workload(suite_name: str, config: dict, url: str,
         n_live = len(live_ids)
         print(f"\n=== Checkpoint {checkpoint_pct}% — {n_live:,} live vectors ===")
 
-        # Recompute GT
-        print("  Computing ground truth (FAISS brute-force)...")
-        gt = compute_gt(live_ids, train, queries, top_k, metric)
+        # Recompute GT (or load from cache)
+        gt = _load_gt_cache(gt_cache_dir, checkpoint_pct, live_ids, top_k)
+        if gt is not None:
+            print("  Ground truth loaded from cache.")
+        else:
+            print("  Computing ground truth (FAISS brute-force)...")
+            gt = compute_gt(live_ids, train, queries, top_k, metric)
+            _save_gt_cache(gt_cache_dir, checkpoint_pct, live_ids, gt)
 
         # Run each benchmark point
         for bench_name, bench_cfg in benchmarks.items():
             metrics = run_benchmark_point(conn, table_name, queries, gt, top_k, metric_op, bench_cfg)
             print(f"  {bench_name:20s}  recall={metrics['recall']:.4f}  "
                   f"QPS={metrics['qps']:.1f}  P50={metrics['p50_ms']:.2f}ms")
-            writer.writerow({
+            row = {
                 "checkpoint_pct": checkpoint_pct,
                 "n_live": n_live,
                 "benchmark": bench_name,
                 **metrics,
-            })
+            }
+            writer.writerow(row)
             csv_file.flush()
+            all_results.append(row)
 
     csv_file.close()
     if not autovacuum:
         conn.execute(f"ALTER TABLE {table_name} RESET (autovacuum_enabled)")
     conn.close()
     print(f"\nResults written to {results_path}")
+
+    _print_summary(suite_name, all_results)
 
 
 def _insert_range(conn, table_name: str, train_data, start_id: int,
