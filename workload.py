@@ -293,27 +293,27 @@ def _print_summary(suite_name: str, all_results: list) -> None:
                   f"{row['qps']:>8.1f}  {q_drift:>8}  "
                   f"{row['p50_ms']:>7.2f}  {row['p99_ms']:>7.2f}")
 
-    # Operating-point table: per checkpoint, which benchmark is closest to target?
+    # Operating-point table: pick the benchmark closest to _RECALL_TARGET at
+    # the first checkpoint, then track that single config across all checkpoints.
     checkpoints = sorted(set(r["checkpoint_pct"] for r in all_results))
-    print(f"\n--- Closest to {_RECALL_TARGET:.2f} recall per checkpoint ---")
-    print(f"{'chkpt%':>7}  {'n_live':>10}  {'benchmark':>20}  "
-          f"{'recall':>8}  {'qps':>8}  {'p50_ms':>7}  {'p99_ms':>7}")
+    first_cp = checkpoints[0]
+    first_cp_rows = [r for r in all_results if r["checkpoint_pct"] == first_cp]
+    op_bench = min(first_cp_rows, key=lambda r: abs(r["recall"] - _RECALL_TARGET))["benchmark"]
+    op_rows = [r for r in all_results if r["benchmark"] == op_bench]
+
+    print(f"\n--- Operating point: '{op_bench}' (closest to {_RECALL_TARGET:.2f} at baseline) ---")
+    print(f"{'chkpt%':>7}  {'n_live':>10}  {'recall':>8}  {'recall_Δ':>9}  "
+          f"{'qps':>8}  {'qps_Δ':>8}  {'p50_ms':>7}  {'p99_ms':>7}")
     print("-" * 76)
-    first_qps: dict[str, float] = {}   # benchmark → QPS at first checkpoint
-    for cp in checkpoints:
-        cp_rows = [r for r in all_results if r["checkpoint_pct"] == cp]
-        best = min(cp_rows, key=lambda r: abs(r["recall"] - _RECALL_TARGET))
-        bname = best["benchmark"]
-        if bname not in first_qps:
-            first_qps[bname] = best["qps"]
-        q_drift = (
-            "baseline"
-            if best["qps"] == first_qps[bname]
-            else f"{(best['qps'] - first_qps[bname]) / (first_qps[bname] or 1) * 100:+.2f}%"
-        )
-        print(f"{cp:>7}  {best['n_live']:>10,}  {bname:>20}  "
-              f"{best['recall']:>8.4f}  {best['qps']:>8.1f}  "
-              f"{best['p50_ms']:>7.2f}  {best['p99_ms']:>7.2f}  {q_drift}")
+    base_recall = op_rows[0]["recall"]
+    base_qps    = op_rows[0]["qps"]
+    for i, row in enumerate(op_rows):
+        r_drift = "baseline" if i == 0 else f"{(row['recall'] - base_recall) / (base_recall or 1) * 100:+.2f}%"
+        q_drift = "baseline" if i == 0 else f"{(row['qps']    - base_qps)    / (base_qps    or 1) * 100:+.2f}%"
+        print(f"{row['checkpoint_pct']:>7}  {row['n_live']:>10,}  "
+              f"{row['recall']:>8.4f}  {r_drift:>9}  "
+              f"{row['qps']:>8.1f}  {q_drift:>8}  "
+              f"{row['p50_ms']:>7.2f}  {row['p99_ms']:>7.2f}")
 
 
 # ---------------------------------------------------------------------------
