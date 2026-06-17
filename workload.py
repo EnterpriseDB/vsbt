@@ -163,81 +163,14 @@ def _save_gt_cache(cache_dir: Path, checkpoint_pct: int,
 
 
 # ---------------------------------------------------------------------------
-# Index creation (vectorchord / pgvector HNSW)
-# ---------------------------------------------------------------------------
-
-def create_index(conn, table_name: str, config: dict, pg_parallel_workers: int = None) -> None:
-    """Create the appropriate index based on config keys."""
-    if pg_parallel_workers:
-        conn.execute(f"SET max_parallel_maintenance_workers = {pg_parallel_workers}")
-        conn.execute(f"SET max_parallel_workers = {pg_parallel_workers}")
-
-    metric = config["metric"]
-
-    if "lists" in config:
-        # VectorChord vchordrq — uses TOML options block, not flat WITH params
-        lists = config["lists"]
-        lists_str = f"[{lists[0]}, {lists[1]}]" if isinstance(lists, list) else str(lists)
-        metric_ops_map = {"l2": "vector_l2_ops", "euclidean": "vector_l2_ops",
-                          "cos": "vector_cosine_ops", "ip": "vector_ip_ops", "dot": "vector_ip_ops"}
-        ops = metric_ops_map[metric]
-        sf = config.get("samplingFactor", 256)
-        rq = "true" if config.get("residual_quantization", True) else "false"
-        build_threads = config.get("build_threads", 1)
-        spherical = "true" if metric in ("cos", "dot", "ip") else "false"
-        ivf_config = (
-            f"residual_quantization = {rq}\n"
-            f"build.pin = 2\n"
-            f"\n"
-            f"[build.internal]\n"
-            f"lists = {lists_str}\n"
-            f"build_threads = {build_threads}\n"
-            f"spherical_centroids = {spherical}\n"
-            f"sampling_factor = {sf}\n"
-        )
-        sql = (
-            f"CREATE INDEX ON {table_name} USING vchordrq (embedding {ops}) "
-            f"WITH (options = $${ivf_config}$$)"
-        )
-    elif "m" in config:
-        # pgvector HNSW
-        m = config["m"]
-        ef = config.get("efConstruction", 128)
-        metric_ops_map = {"l2": "vector_l2_ops", "euclidean": "vector_l2_ops",
-                          "cos": "vector_cosine_ops", "ip": "vector_ip_ops", "dot": "vector_ip_ops"}
-        ops = metric_ops_map[metric]
-        sql = (
-            f"CREATE INDEX ON {table_name} USING hnsw (embedding {ops}) "
-            f"WITH (m = {m}, ef_construction = {ef})"
-        )
-    else:
-        raise ValueError("Config must have 'lists' (vectorchord) or 'm' (pgvector HNSW)")
-
-    print(f"Building index: {sql}")
-    conn.execute(sql)
-
-
-# ---------------------------------------------------------------------------
 # Per-checkpoint benchmark
 # ---------------------------------------------------------------------------
 
-def _apply_gucs(conn, benchmark: dict) -> None:
-    """Apply suite-specific GUCs from a benchmark config."""
-    if "nprob" in benchmark:
-        conn.execute(f'SET vchordrq.probes = \'{benchmark["nprob"]}\'')
-    if "epsilon" in benchmark:
-        conn.execute(f'SET vchordrq.epsilon = {benchmark["epsilon"]}')
-    if "efSearch" in benchmark:
-        conn.execute(f'SET hnsw.ef_search = {benchmark["efSearch"]}')
-    if "probes" in benchmark:
-        conn.execute(f'SET ivfflat.probes = {benchmark["probes"]}')
-
-
-def run_benchmark_point(conn, table_name: str, queries: np.ndarray, gt: np.ndarray,
-                        top_k: int, metric_op: str, benchmark: dict) -> dict:
+def run_benchmark_point(suite, conn, table_name: str, queries: np.ndarray,
+                        gt: np.ndarray, top_k: int, metric_op: str,
+                        benchmark: dict) -> dict:
     """Run a single benchmark point; return {recall, qps, p50_ms, p99_ms}."""
-    _apply_gucs(conn, benchmark)
-    conn.execute("SET enable_seqscan = off")
+    suite.apply_session_guc(conn, benchmark)
 
     query_sql = f"SELECT id FROM {table_name} ORDER BY embedding {metric_op} %s LIMIT {top_k}"
     cur = conn.cursor()
@@ -332,7 +265,11 @@ def _print_summary(suite_name: str, all_results: list) -> None:
 # ---------------------------------------------------------------------------
 
 def run_workload(suite_name: str, config: dict, url: str,
-                 chunk_size: int = 200_000, num_threads: int = 4) -> None:
+                 chunk_size: int = 200_000, num_threads: int = 4,
+                 suite=None) -> None:
+    if suite is None:
+        raise ValueError("suite must be provided; pass suite=self from the suite runner")
+
     workload_cfg = config.get("workload", {})
     start_pct   = workload_cfg.get("start_pct", 50)
     step_pct    = workload_cfg.get("step_pct", 10)
@@ -372,12 +309,10 @@ def run_workload(suite_name: str, config: dict, url: str,
 
     live_ids = np.arange(n_start, dtype=np.int32)
 
-    # --- Build index ---
-    pg_workers = config.get("pg_parallel_workers")
-    print(f"Building index...")
-    t0 = time.perf_counter()
-    create_index(conn, table_name, config, pg_workers)
-    print(f"Index built in {time.perf_counter() - t0:.1f}s")
+    # --- Build index via suite (reuses suite-specific SQL and monitoring) ---
+    suite.results.setdefault(suite_name, {})
+    print("Building index...")
+    suite.create_index(suite_name, table_name, ds)
 
     # --- Result collection ---
     results_path = Path(f"./results/{suite_name}/workload_results.csv")
@@ -450,7 +385,8 @@ def run_workload(suite_name: str, config: dict, url: str,
 
         # Run each benchmark point
         for bench_name, bench_cfg in benchmarks.items():
-            metrics = run_benchmark_point(conn, table_name, queries, gt, top_k, metric_op, bench_cfg)
+            metrics = run_benchmark_point(suite, conn, table_name, queries, gt,
+                                          top_k, metric_op, bench_cfg)
             print(f"  {bench_name:20s}  recall={metrics['recall']:.4f}  "
                   f"QPS={metrics['qps']:.1f}  P50={metrics['p50_ms']:.2f}ms")
             row = {
@@ -495,6 +431,20 @@ def _insert_range(conn, table_name: str, train_data, start_id: int,
 # Entry point
 # ---------------------------------------------------------------------------
 
+def _make_suite(suite_file: str, url: str, chunk_size: int, first_config: dict):
+    """Instantiate the right TestSuite class for standalone execution."""
+    if "lists" in first_config:
+        from vectorchord_suite import TestSuite
+    elif "m" in first_config or first_config.get("indexType"):
+        from pgvector_suite import TestSuite
+    else:
+        raise ValueError(
+            "Cannot determine suite type: config needs 'lists' (VectorChord) "
+            "or 'm'/'indexType' (pgvector)"
+        )
+    return TestSuite(suite_file, url, [], chunk_size)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Workload benchmark for vector search indexes")
     parser.add_argument("-s", "--suite", required=True, help="YAML config file")
@@ -507,14 +457,20 @@ def main():
     with open(args.suite) as f:
         full_config = yaml.safe_load(f)
 
-    for suite_name, config in full_config.items():
-        if "workload" not in config:
-            print(f"Skipping {suite_name}: no 'workload' key in config")
-            continue
+    workload_configs = {k: v for k, v in full_config.items() if "workload" in v}
+    if not workload_configs:
+        print("No suites with 'workload' key found in config.")
+        return
+
+    first_config = next(iter(workload_configs.values()))
+    suite = _make_suite(args.suite, args.url, args.chunk_size, first_config)
+
+    for suite_name, config in workload_configs.items():
         print(f"\nRunning workload benchmark: {suite_name}")
         run_workload(suite_name, config, args.url,
                      chunk_size=args.chunk_size,
-                     num_threads=args.max_load_threads)
+                     num_threads=args.max_load_threads,
+                     suite=suite)
 
 
 if __name__ == "__main__":
