@@ -1189,7 +1189,8 @@ class TestSuite:
                 from workload import run_workload
                 run_workload(suite_name, self.config[suite_name], self.url,
                              chunk_size=self.chunk_size,
-                             num_threads=self.max_load_threads)
+                             num_threads=self.max_load_threads,
+                             suite=self)
             elif mode == "filtered":
                 from filtered import run_filtered
                 run_filtered(suite_name, self.config[suite_name], self.url,
