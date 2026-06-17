@@ -257,34 +257,63 @@ def run_benchmark_point(conn, table_name: str, queries: np.ndarray, gt: np.ndarr
 # Summary table
 # ---------------------------------------------------------------------------
 
+_RECALL_TARGET = 0.95
+
+
 def _print_summary(suite_name: str, all_results: list) -> None:
-    print(f"\n{'=' * 72}")
+    print(f"\n{'=' * 76}")
     print(f"Workload Summary: {suite_name}")
-    print(f"{'=' * 72}")
+    print(f"{'=' * 76}")
 
     # Group by benchmark name preserving insertion order
     benches: dict[str, list] = {}
     for r in all_results:
         benches.setdefault(r["benchmark"], []).append(r)
 
+    # Per-benchmark tables; mark row closest to _RECALL_TARGET with *
     for bench_name, rows in benches.items():
+        closest_idx = min(range(len(rows)),
+                          key=lambda i: abs(rows[i]["recall"] - _RECALL_TARGET))
         print(f"\nBenchmark: {bench_name}")
-        print(f"{'chkpt%':>7}  {'n_live':>10}  {'recall':>8}  {'recall_Δ':>9}  "
+        print(f"{'':1}  {'chkpt%':>7}  {'n_live':>10}  {'recall':>8}  {'recall_Δ':>9}  "
               f"{'qps':>8}  {'qps_Δ':>8}  {'p50_ms':>7}  {'p99_ms':>7}")
-        print("-" * 72)
+        print("-" * 76)
         base_recall = rows[0]["recall"]
         base_qps    = rows[0]["qps"]
         for i, row in enumerate(rows):
+            marker = "*" if i == closest_idx else " "
             if i == 0:
                 r_drift = "baseline"
                 q_drift = "baseline"
             else:
                 r_drift = f"{(row['recall'] - base_recall) / (base_recall or 1) * 100:+.2f}%"
                 q_drift = f"{(row['qps']    - base_qps)    / (base_qps    or 1) * 100:+.2f}%"
-            print(f"{row['checkpoint_pct']:>7}  {row['n_live']:>10,}  "
+            print(f"{marker}  {row['checkpoint_pct']:>7}  {row['n_live']:>10,}  "
                   f"{row['recall']:>8.4f}  {r_drift:>9}  "
                   f"{row['qps']:>8.1f}  {q_drift:>8}  "
                   f"{row['p50_ms']:>7.2f}  {row['p99_ms']:>7.2f}")
+
+    # Operating-point table: per checkpoint, which benchmark is closest to target?
+    checkpoints = sorted(set(r["checkpoint_pct"] for r in all_results))
+    print(f"\n--- Closest to {_RECALL_TARGET:.2f} recall per checkpoint ---")
+    print(f"{'chkpt%':>7}  {'n_live':>10}  {'benchmark':>20}  "
+          f"{'recall':>8}  {'qps':>8}  {'p50_ms':>7}  {'p99_ms':>7}")
+    print("-" * 76)
+    first_qps: dict[str, float] = {}   # benchmark → QPS at first checkpoint
+    for cp in checkpoints:
+        cp_rows = [r for r in all_results if r["checkpoint_pct"] == cp]
+        best = min(cp_rows, key=lambda r: abs(r["recall"] - _RECALL_TARGET))
+        bname = best["benchmark"]
+        if bname not in first_qps:
+            first_qps[bname] = best["qps"]
+        q_drift = (
+            "baseline"
+            if best["qps"] == first_qps[bname]
+            else f"{(best['qps'] - first_qps[bname]) / (first_qps[bname] or 1) * 100:+.2f}%"
+        )
+        print(f"{cp:>7}  {best['n_live']:>10,}  {bname:>20}  "
+              f"{best['recall']:>8.4f}  {best['qps']:>8.1f}  "
+              f"{best['p50_ms']:>7.2f}  {best['p99_ms']:>7.2f}  {q_drift}")
 
 
 # ---------------------------------------------------------------------------
