@@ -195,7 +195,7 @@ class TestSuite(common.TestSuite):
         pg_parallel_workers = config["pg_parallel_workers"]
         lists = config["lists"]
         build_threads = config.get("build_threads", 1)
-        kmeans_hierarchical = config["kmeans_hierarchical"]
+        kmeans_hierarchical = config.get("kmeans_hierarchical", False)
         kmeans_dimension = config.get("kmeans_dimension", dataset["dim"])
         sampling_factor = config["samplingFactor"]
         residual_quantization = config["residual_quantization"]

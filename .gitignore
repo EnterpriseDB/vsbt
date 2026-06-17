@@ -29,6 +29,15 @@ docs/
 # Planning docs
 PLAN.md
 
+# Ariadne (internal extension, kept in a separate private fork)
+ariadne_*.py
+config/**/ariadne-*.yaml
+
+# Other internal / scratch files
+blog_companion.html
+pgd-lab/
+monitor/peak_memory.py
+
 # OS
 .DS_Store
 Thumbs.db

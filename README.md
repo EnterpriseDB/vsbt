@@ -1,6 +1,6 @@
 # Vector Search Benchmark Suite
 
-A comprehensive benchmarking tool for PostgreSQL vector search extensions. Compare performance across **pgvector**, **VectorChord**, and **pgpu** (GPU-accelerated) on datasets ranging from 1M to 1B vectors.
+A comprehensive benchmarking tool for PostgreSQL vector search extensions. Compare performance across **pgvector** and **VectorChord** on datasets ranging from 1M to 1B vectors, across three benchmark modes: static (readonly), write-pressure (workload), and filtered queries.
 
 ## Supported Extensions
 
@@ -9,14 +9,112 @@ A comprehensive benchmarking tool for PostgreSQL vector search extensions. Compa
 | **[pgvector](https://github.com/pgvector/pgvector)** | [HNSW](https://arxiv.org/abs/1603.09320) | Standard CPU-based approximate nearest neighbor search |
 | **[pgvector](https://github.com/pgvector/pgvector)** | IVFFlat | Inverted-file index over the float vector column |
 | **[pgvector](https://github.com/pgvector/pgvector)** | IVFFlat BQ + Rerank | IVFFlat over `binary_quantize(embedding)` with full-precision rerank |
-| **[vchordq](https://github.com/tensorchord/VectorChord)** | [IVF-RaBitQ](https://arxiv.org/abs/2405.12497) ([VectorChord](https://blog.vectorchord.ai/scaling-vector-search-to-1-billion-on-postgresql)) | High dimensionality & high performance vector quantization & compression |
-| **[pgpu](https://github.com/EnterpriseDB/pgpu)** | IVF-RaBitQ (VectorChord) | GPU-accelerated index building for VectorChord |
+| **[VectorChord](https://github.com/tensorchord/VectorChord)** | [IVF-RaBitQ](https://arxiv.org/abs/2405.12497) | High-performance IVF with residual binary quantization |
+
+## Benchmark Modes
+
+vsbt supports three benchmark modes controlled by a `mode:` key in your YAML config. Omitting `mode:` runs the default readonly mode.
+
+| Mode | YAML | Description |
+|------|------|-------------|
+| readonly | *(default, omit `mode:`)* | Benchmark queries against a fully-built static index. No writes occur during the run. Use this to compare raw ANN recall and throughput. |
+| workload | `mode: workload` | Simulate a live dataset with continuous inserts and deletes. Measures how recall and QPS degrade as the index accumulates dead entries and structural drift. |
+| filtered | `mode: filtered` | Benchmark queries that include a metadata filter (e.g. `WHERE category = 'Finance'`). Tests how well each extension handles selective and anticorrelated filter conditions. |
+| hybrid | `mode: hybrid` | *(coming soon)* Combined dense vector + BM25 keyword search, scored with Reciprocal Rank Fusion. |
+
+## Workload Mode
+
+Real production vector indexes are never static. Applications continuously insert new vectors and delete old ones — documents get updated, old items expire, users churn. As this happens, the index accumulates dead entries and its internal structure becomes less optimal. Both effects hurt recall and QPS over time. Workload mode measures exactly this: how much performance degrades under write pressure, and how quickly.
+
+**What it measures.** The benchmark starts with the index populated to a configurable fraction of the full dataset (default: 50%) and advances through 6 checkpoints up to 100%. At each checkpoint, a mix of inserts and deletes is applied, controlled by `insert_ratio` and `delete_ratio` in the YAML. After each step, recall and QPS are measured against the current live state of the index.
+
+**Why ground truth is recomputed at each checkpoint.** After deletes, the true nearest neighbors change — deleted vectors are no longer valid answers. vsbt recomputes exact ground truth at each checkpoint using FAISS brute-force search against only the live vector set. FAISS brute-force is exact and fast enough at the scales tested (seconds at 5M vectors).
+
+**Key metrics.** Recall@K and QPS at each checkpoint, plus the effect of autovacuum on dead-tuple cleanup. Setting `autovacuum: false` measures raw degradation without any background cleanup; enabling it shows the recovery behaviour under realistic PostgreSQL operation.
+
+Results are written to `results/{name}/workload_results.csv` with columns: `checkpoint_pct`, `n_live`, `benchmark`, `recall`, `qps`, `p50_ms`, `p99_ms`.
+
+```yaml
+vc-laion-5m-workload:
+  mode: workload
+  dataset: laion-5m-test-ip
+  metric: ip
+  lists: [50, 8000]
+  samplingFactor: 256
+  residual_quantization: true
+  pg_parallel_workers: 32
+  top: 10
+  workload:
+    start_pct: 50        # start at 50% of the dataset
+    step_pct: 10         # grow by 10% per checkpoint
+    insert_ratio: 0.7    # 70% of each step are inserts
+    delete_ratio: 0.3    # 30% of each step are deletes of random live rows
+    autovacuum: false    # disable autovacuum during the run (measure raw degradation)
+  benchmarks:
+    10-20-1.9: { nprob: "10,20", epsilon: 1.9 }
+    25-50-1.9: { nprob: "25,50", epsilon: 1.9 }
+```
+
+## Filtered Search
+
+Most production queries aren't pure "find the nearest vectors." They include metadata filters: "find similar documents, but only from the Finance category, published after 2023." The filter can be highly selective (0.1% of vectors qualify) or loose (30% qualify). The pathological case is when the filter is *anticorrelated* with the embedding space — the semantically closest vectors tend not to pass the filter. This breaks any graph or IVF index that navigates toward nearest neighbors, because the nearest neighbors are the wrong ones.
+
+**Filter types.** vsbt includes three filter conditions:
+
+- **Synthetic (neutral):** A random 0/1 label assigned to each vector, independent of the embedding space. A 5% selectivity filter means exactly 5% of vectors have `filter_label = 1`. This is the neutral baseline — the index structure has no inherent advantage or disadvantage.
+- **Synthetic (anticorrelated):** Labels are assigned so that vectors farthest from the typical query direction get `filter_label = 1`. The true nearest neighbors for most queries will have `filter_label = 0` and fail the filter. This is the worst-case scenario for any index that exploits locality.
+- **YFCC-10M (real metadata):** 10 million image vectors with real Flickr tags as filters. Each query specifies a set of tags; a candidate matches only if it has all of the query's tags (AND semantics). This validates whether synthetic benchmarks reflect what actual metadata distributions look like.
+
+**Selectivity sweep.** Benchmarks run at {0.1, 1, 5, 10, 30}% selectivity. Below 1% is the pathological zone where post-filtering breaks down. The 1–10% range is where prefilter and post-filter strategies trade off. Above 10%, standard ANN with post-filtering generally works well enough.
+
+**How each extension handles filtering.**
+
+- *pgvector 0.8+:* `SET hnsw.iterative_scan = relaxed_order` instructs the HNSW scan to continue past the initial K results until K qualifying results are found. Without this, recall at low selectivity collapses.
+- *VectorChord:* `SET vchordrq.prefilter = on` builds a bitvector of qualifying rows before the IVF scan. Typically 3–5× faster than post-filtering at 1–5% selectivity.
+
+**Ground truth** is precomputed offline via FAISS brute-force. Run `utils/generate_synthetic_filtered.py` for LAION/SIFT/DBpedia and `utils/process_yfcc_filtered.py` for YFCC — one-time jobs that produce HDF5 files. Results go to `results/{name}/filtered_results.csv`.
+
+```yaml
+pgvector-laion-5m-neutral-1pct:
+  mode: filtered
+  dataset: laion-5m-filtered-neutral
+  selectivity: 1.0
+  metric: ip
+  pg_parallel_workers: 32
+  top: 10
+  m: 16
+  efConstruction: 128
+  benchmarks:
+    ef40:  { efSearch: 40 }
+    ef80:  { efSearch: 80 }
+    ef200: { efSearch: 200 }
+
+vc-laion-5m-neutral-1pct:
+  mode: filtered
+  dataset: laion-5m-filtered-neutral
+  selectivity: 1.0
+  metric: ip
+  lists: [50, 8000]
+  samplingFactor: 256
+  residual_quantization: true
+  pg_parallel_workers: 32
+  top: 10
+  benchmarks:
+    10-20-1.9: { nprob: "10,20", epsilon: 1.9 }
+```
+
+Example configs are in `config/laion-5m-filtered/`.
+
+## Hybrid Search *(coming soon)*
+
+Hybrid search combines dense vector similarity with keyword (BM25) search. Most real user queries benefit from both — semantic understanding catches paraphrases and concept matches that BM25 misses, while exact keyword matching catches names, model numbers, and domain-specific terms that embeddings blur together. The planned implementation uses Reciprocal Rank Fusion (RRF) to merge result lists from a BM25 engine (`pg_search`) and a vector ANN index. Benchmarks will measure retrieval quality (NDCG@10, Recall@K) and end-to-end latency across a range of fusion weights and selectivity levels.
 
 ## Supported Datasets
 
+### Standard Datasets
+
 | Dataset | Vectors | Dimensions | Metric | Type |
 |---------|---------|------------|--------|------|
-| laion-1m-test-ip | 1M | 768 | Inner Product | HDF5 |
 | laion-5m-test-ip | 5M | 768 | Inner Product | HDF5 |
 | laion-20m-test-ip | 20M | 768 | Inner Product | HDF5 |
 | laion-100m-test-ip | 100M | 768 | Inner Product | HDF5 |
@@ -25,6 +123,7 @@ A comprehensive benchmarking tool for PostgreSQL vector search extensions. Compa
 | sift-128-euclidean | 1M | 128 | L2 | HDF5 |
 | glove-100-angular | 1.2M | 100 | Cosine | HDF5 |
 | gist-960-euclidean | 1M | 960 | L2 | HDF5 |
+| dbpedia-openai-1000k-angular | 1M | 1536 | Cosine | HDF5 |
 | openai-500k-cos | 500K | 1536 | Cosine | Parquet |
 | openai-1m-cos | 1M | 1536 | Cosine | Parquet |
 | openai-2m-cos | 2M | 1536 | Cosine | Parquet |
@@ -33,6 +132,24 @@ A comprehensive benchmarking tool for PostgreSQL vector search extensions. Compa
 | cohere-2m-cos | 2M | 768 | Cosine | Parquet |
 | cohere-3m-cos | 3M | 768 | Cosine | Parquet |
 | cohere-10m-cos | 10M | 768 | Cosine | Parquet |
+
+### Filtered Datasets
+
+Pre-processed datasets with filter labels and pre-computed filtered ground truth (see [Filtered Search](#filtered-search) above). Generated by `utils/generate_synthetic_filtered.py` and `utils/process_yfcc_filtered.py`.
+
+| Dataset | Source | Filter Type | Selectivities |
+|---------|--------|-------------|---------------|
+| sift-1m-filtered-neutral | SIFT-1M | Synthetic neutral | 0.1, 1, 5, 10, 30% |
+| sift-1m-filtered-anticorrelated | SIFT-1M | Synthetic anticorrelated | 0.1, 1, 5, 10, 30% |
+| dbpedia-1m-filtered-neutral | DBpedia-1M | Synthetic neutral | 0.1, 1, 5, 10, 30% |
+| dbpedia-1m-filtered-anticorrelated | DBpedia-1M | Synthetic anticorrelated | 0.1, 1, 5, 10, 30% |
+| laion-5m-filtered-neutral | LAION-5M | Synthetic neutral | 0.1, 1, 5, 10, 30% |
+| laion-5m-filtered-anticorrelated | LAION-5M | Synthetic anticorrelated | 0.1, 1, 5, 10, 30% |
+| laion-20m-filtered-neutral | LAION-20M | Synthetic neutral | 0.1, 1, 5, 10, 30% |
+| laion-20m-filtered-anticorrelated | LAION-20M | Synthetic anticorrelated | 0.1, 1, 5, 10, 30% |
+| laion-100m-filtered-neutral | LAION-100M | Synthetic neutral | 0.1, 1, 5, 10, 30% |
+| laion-100m-filtered-anticorrelated | LAION-100M | Synthetic anticorrelated | 0.1, 1, 5, 10, 30% |
+| yfcc-10m-filtered | YFCC-10M | Real Flickr tags (AND) | Per-query (match_counts) |
 
 Datasets are automatically downloaded on first use into `./datasets` (relative to the working directory). To use a different location — e.g. a dedicated data volume — set `DATASET_LOCAL_DIR` before running any suite. This applies to **all** dataset types (HDF5, NPY, parquet) and all suites:
 
@@ -73,8 +190,6 @@ pip install -r requirements.txt
 
 ### Required PostgreSQL Extensions
 
-Depending on which benchmark suite you want to run:
-
 ```sql
 -- For pgvector benchmarks
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -82,10 +197,6 @@ CREATE EXTENSION IF NOT EXISTS pg_prewarm;
 
 -- For VectorChord benchmarks
 CREATE EXTENSION IF NOT EXISTS vchord CASCADE;
-
--- For PGPU benchmarks
-CREATE EXTENSION IF NOT EXISTS vchord CASCADE;
-CREATE EXTENSION IF NOT EXISTS pgpu;
 ```
 
 ## Usage
@@ -143,16 +254,6 @@ python vectorchord_suite.py -s config/laion-100m-test-ip/vectorchord-570-320k.ya
 
 # Run 1B dataset benchmark
 python vectorchord_suite.py -s config/deep1b-test-l2/vectorchord-800-640k.yaml
-```
-
-### Running PGPU (GPU-Accelerated) Benchmarks
-
-```bash
-# Run GPU-accelerated index build with 5M dataset
-python pgpu_suite.py -s config/laion-5m-test-ip/pgpu.yaml
-
-# Run with 100M dataset
-python pgpu_suite.py -s config/laion-100m-test-ip/pgpu.yaml
 ```
 
 ### Using External Centroids
@@ -348,25 +449,6 @@ vc-laion-5m-190-35k:
 
 VectorChord configs accept an optional `rerank_in_table: true` flag — when set, the final exact rerank pass reads vectors from the heap table instead of from a copy stored inside the index, producing a smaller index at the cost of slower queries. **This is not the [recommended VectorChord default](https://docs.vectorchord.ai/vectorchord/usage/rerank-in-table.html)** and trades query latency for disk space; the existing parquet-dataset configs in this repo enable it for testing only.
 
-### PGPU Configuration Example
-
-```yaml
-pgpu-laion-100m-160000-test-ip:
-  dataset: laion-100m-test-ip
-  datasetType: hdf5
-  metric: dot
-  lists: [500, 160000]
-  samplingFactor: 256
-  batchSize: 10000000
-  pg_parallel_workers: 32
-  residual_quantization: true
-  top: 10
-  benchmarks:
-    50-1.0:
-      nprob: 50,100
-      epsilon: 1.0
-```
-
 ## Output
 
 Results are organized per test name, with each test accumulating results across multiple runs:
@@ -486,55 +568,50 @@ python verify_deep1B.py
 
 ```
 vector-search/
-├── common.py                 # Base test suite class
-├── datasets.py               # Dataset download and loading
+├── common.py                 # Base test suite class; mode dispatch
+├── datasets.py               # Dataset registry and loaders
+├── loader.py                 # Fast numpy binary COPY bulk loader
 ├── results.py                # Results management and visualization
+├── filtered.py               # Filtered ANN benchmark runner
+├── workload.py               # Write-workload benchmark runner
 ├── compare_runs.py           # Historical benchmark comparison utility
 ├── chart_compare.py          # Cross-run comparison chart generator
-├── pgvector_suite.py         # pgvector HNSW benchmarks
+├── pgvector_suite.py         # pgvector HNSW / IVFFlat benchmarks
 ├── vectorchord_suite.py      # VectorChord IVF benchmarks
-├── pgpu_suite.py             # GPU-accelerated benchmarks
 ├── requirements.txt          # Python dependencies
 ├── config/                   # Benchmark configurations, grouped by dataset
 │   ├── sift-128-euclidean/
-│   │   ├── pgvector-m16-64.yaml
-│   │   └── vectorchord-32-2k.yaml
 │   ├── glove-100-angular/
 │   ├── gist-960-euclidean/
 │   ├── laion-5m-test-ip/
-│   │   ├── pgvector-m16-64.yaml
-│   │   ├── pgvector-m16-128.yaml
-│   │   ├── vectorchord-50-8k.yaml
-│   │   ├── vectorchord-190-35k.yaml
-│   │   └── pgpu.yaml
 │   ├── laion-20m-test-ip/
 │   ├── laion-100m-test-ip/
 │   ├── laion-400m-test-ip/
 │   ├── deep1b-test-l2/
-│   ├── openai-500k-cos/
-│   ├── openai-1m-cos/
-│   ├── openai-2m-cos/
-│   ├── openai-5m-cos/
-│   ├── cohere-1m-cos/
-│   ├── cohere-2m-cos/
-│   ├── cohere-3m-cos/
-│   └── cohere-10m-cos/
+│   ├── openai-*/  cohere-*/
+│   └── laion-5m-filtered/    # Filtered benchmark example configs
 ├── monitor/
-│   ├── __init__.py           # Monitor package
+│   ├── __init__.py
 │   ├── system_monitor.py     # System metrics (psutil-based)
 │   └── pg_stats.py           # PostgreSQL statistics collector
 ├── utils/
 │   ├── run_benchmarks.sh     # Automated benchmark runner with server simulation
 │   ├── run_full_pipeline.sh  # Full build → benchmark → park pipeline
+│   ├── migrate_bucket.sh     # S3 bucket reorganisation script
+│   ├── generate_synthetic_filtered.py  # Generate filtered GT for standard datasets
+│   ├── process_yfcc_filtered.py        # Process YFCC-10M into filtered HDF5
 │   ├── convert_deep1b.py     # Deep1B format converter
 │   └── verify_deep1B.py      # File integrity checker
 └── results/                  # Output directory (generated)
-    ├── all_results.csv       # Global CSV (all runs)
-    ├── {test_name}/          # Per-test results
-    │   ├── report.md         # Aggregated report
-    │   ├── runs/*.json       # Raw data per run
-    │   └── charts/*.png      # Charts
-    └── comparisons/          # Cross-test comparison charts
+    ├── all_results.csv
+    ├── {test_name}/
+    │   ├── report.md
+    │   ├── filtered_results.csv   # filtered mode output
+    │   ├── workload_results.csv   # workload mode output
+    │   ├── pg_settings.csv        # non-default PostgreSQL settings snapshot
+    │   ├── runs/*.json
+    │   └── charts/*.png
+    └── comparisons/
 ```
 
 ## pgvector: Memory Tuning for Large HNSW Index Builds

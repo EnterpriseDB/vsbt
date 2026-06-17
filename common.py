@@ -13,6 +13,7 @@ import yaml
 from tqdm import tqdm
 
 import datasets
+from loader import load_vectors, load_vectors_generator
 from monitor import (
     SystemMonitor,
     PGStatsCollector,
@@ -308,7 +309,6 @@ class TestSuite:
         """Create a database connection."""
         conn = psycopg.Connection.connect(
             conninfo=self.url,
-            dbname="postgres",
             autocommit=True,
             **self.keepalive_kwargs,
         )
@@ -549,69 +549,24 @@ class TestSuite:
         chunk_size = self.chunk_size if self.chunk_size else 100_000
         num_threads = self.max_load_threads or 1
 
+        pbar = tqdm(desc="Adding embeddings", total=n, unit=" rows", ncols=80, unit_scale=True)
+
         if is_sliceable:
-            # === SLICEABLE PATH (HDF5, Deep1B mmap) ===
-            def load_chunk(chunk_start, chunk_len):
-                t_conn = self.create_connection()
-                chunk_data = data[chunk_start: chunk_start + chunk_len]
-
-                # Cast if needed
-                if chunk_data.dtype != np.float32:
-                    chunk_data = chunk_data.astype(np.float32)
-
-                with t_conn.cursor().copy(
-                        f"COPY {table_name} (id, embedding) FROM STDIN WITH (FORMAT BINARY)"
-                ) as copy:
-                    copy.set_types(["integer", "vector"])
-                    for i, vec in enumerate(chunk_data):
-                        copy.write_row((chunk_start + i, vec))
-                    while t_conn.pgconn.flush() == 1:
-                        time.sleep(0)
-                t_conn.close()
-
-            pbar = tqdm(desc="Adding embeddings", total=n, unit=" rows", ncols=80, unit_scale=True)
-
-            if num_threads > 1:
-                threads = []
-                batch_rows = 0
-                for i in range(0, n, chunk_size):
-                    chunk_len = min(chunk_size, n - i)
-                    t = threading.Thread(target=load_chunk, args=(i, chunk_len))
-                    threads.append(t)
-                    batch_rows += chunk_len
-
-                    if len(threads) >= num_threads or (i + chunk_len) >= n:
-                        for thread in threads:
-                            thread.start()
-                        for thread in threads:
-                            thread.join()
-                        pbar.update(batch_rows)
-                        threads = []
-                        batch_rows = 0
-            else:
-                for i in range(0, n, chunk_size):
-                    chunk_len = min(chunk_size, n - i)
-                    load_chunk(i, chunk_len)
-                    pbar.update(chunk_len)
-
-            pbar.close()
-
+            load_vectors(
+                conn_factory=self.create_connection,
+                table_name=table_name,
+                data=data,
+                n=n,
+                chunk_size=chunk_size,
+                num_threads=num_threads,
+                progress=pbar,
+            )
         else:
-            # === GENERATOR PATH (LAION) ===
             conn = self.create_connection()
-            pbar = tqdm(desc="Adding embeddings", total=n, unit=" rows", ncols=80, unit_scale=True)
-
-            with conn.cursor().copy(
-                    f"COPY {table_name} (id, embedding) FROM STDIN WITH (FORMAT BINARY)"
-            ) as copy:
-                copy.set_types(["integer", "vector"])
-                for i, vec in data:
-                    copy.write_row((i, vec))
-                    while conn.pgconn.flush() == 1:
-                        time.sleep(0)
-                    pbar.update(1)
+            load_vectors_generator(conn, table_name, data, n, progress=pbar)
             conn.close()
-            pbar.close()
+
+        pbar.close()
 
         end_time = time.perf_counter()
         self.results[suite_name]["load_time"] = int(round(end_time - start_time))
@@ -1099,6 +1054,29 @@ class TestSuite:
         except psycopg.Error:
             pass
 
+        # Capture non-default settings and write full pg_settings.csv
+        try:
+            import csv as _csv
+            all_settings = conn.execute(
+                "SELECT name, setting, unit, source FROM pg_settings ORDER BY name"
+            ).fetchall()
+            settings_dir = f"./results/{name}"
+            os.makedirs(settings_dir, exist_ok=True)
+            with open(f"{settings_dir}/pg_settings.csv", "w", newline="") as _f:
+                w = _csv.writer(_f)
+                w.writerow(["name", "setting", "unit", "source"])
+                for row in all_settings:
+                    w.writerow(row)
+            nondefault = [
+                [r[0], f"{r[1]}{r[2] or ''}", r[3]]
+                for r in all_settings
+                if r[3] not in ("default", "client")
+            ]
+            if nondefault:
+                self.results[name]["pg_settings_nondefault"] = nondefault
+        except Exception:
+            pass
+
         # Initialize PG stats collector
         self.pg_stats_collector = PGStatsCollector(conn)
 
@@ -1107,7 +1085,8 @@ class TestSuite:
             self.pg_stats_collector.capture_snapshot("baseline", table_name)
 
         # 1. LOAD DATASET (Unified)
-        ds = datasets.get_dataset(dataset_name)
+        selectivity = self.config[name].get("selectivity")
+        ds = datasets.get_dataset(dataset_name, selectivity=selectivity)
         # Compatibility mapping
         ds["answer"] = ds.pop("neighbors")
 
@@ -1204,6 +1183,19 @@ class TestSuite:
             self._system_report_content = generate_system_report()
 
         for suite_name in self.config:
-            print(f"Running test: {suite_name}")
-            self.run_suite(suite_name)
+            mode = self.config[suite_name].get("mode", "readonly")
+            print(f"Running test: {suite_name} (mode={mode})")
+            if mode == "workload":
+                from workload import run_workload
+                run_workload(suite_name, self.config[suite_name], self.url,
+                             chunk_size=self.chunk_size,
+                             num_threads=self.max_load_threads,
+                             suite=self)
+            elif mode == "filtered":
+                from filtered import run_filtered
+                run_filtered(suite_name, self.config[suite_name], self.url,
+                             chunk_size=self.chunk_size,
+                             num_threads=self.max_load_threads)
+            else:
+                self.run_suite(suite_name)
         self.generate_markdown_result()

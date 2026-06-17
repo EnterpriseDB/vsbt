@@ -1,0 +1,41 @@
+pgvector-laion-5m-neutral-0.1pct:
+  mode: filtered
+  dataset: laion-5m-filtered-neutral
+  selectivity: 0.1
+  metric: ip
+  pg_parallel_workers: 32
+  top: 10
+  m: 16
+  efConstruction: 128
+  benchmarks:
+    ef40:   { efSearch: 40 }
+    ef80:   { efSearch: 80 }
+    ef200:  { efSearch: 200 }
+
+pgvector-laion-5m-neutral-1pct:
+  mode: filtered
+  dataset: laion-5m-filtered-neutral
+  selectivity: 1.0
+  metric: ip
+  pg_parallel_workers: 32
+  top: 10
+  m: 16
+  efConstruction: 128
+  benchmarks:
+    ef40:   { efSearch: 40 }
+    ef80:   { efSearch: 80 }
+    ef200:  { efSearch: 200 }
+
+pgvector-laion-5m-neutral-5pct:
+  mode: filtered
+  dataset: laion-5m-filtered-neutral
+  selectivity: 5.0
+  metric: ip
+  pg_parallel_workers: 32
+  top: 10
+  m: 16
+  efConstruction: 128
+  benchmarks:
+    ef40:   { efSearch: 40 }
+    ef80:   { efSearch: 80 }
+    ef200:  { efSearch: 200 }

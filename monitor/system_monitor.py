@@ -159,21 +159,44 @@ def get_block_device_for_path(path: str) -> str:
     return None
 
 
+def _get_pg_wal_directory(conn) -> Optional[str]:
+    """Query PostgreSQL for its WAL directory (may differ from data_directory)."""
+    try:
+        with conn.cursor() as cur:
+            # pg_waldir() available since PG 11; fall back to $PGDATA/pg_wal
+            cur.execute("SELECT pg_waldir()")
+            result = cur.fetchone()
+            return result[0] if result else None
+    except Exception:
+        return None
+
+
 def detect_pg_io_device(conn) -> list[str]:
     """
     Auto-detect the block device(s) used by PostgreSQL.
 
-    Returns a list of device names for IO monitoring.
+    Checks both the data directory and the WAL directory. If they live on
+    the same device, returns a single-element list; otherwise returns both
+    so both devices are monitored.
+
+    Returns a list of device names for IO monitoring, or None on failure.
     """
     data_dir = get_pg_data_directory(conn)
     if not data_dir:
         return None
 
-    device = get_block_device_for_path(data_dir)
-    if device:
-        return [device]
+    devices = []
+    data_device = get_block_device_for_path(data_dir)
+    if data_device:
+        devices.append(data_device)
 
-    return None
+    wal_dir = _get_pg_wal_directory(conn)
+    if wal_dir:
+        wal_device = get_block_device_for_path(wal_dir)
+        if wal_device and wal_device not in devices:
+            devices.append(wal_device)
+
+    return devices if devices else None
 
 
 class SystemMonitor:
@@ -198,6 +221,7 @@ class SystemMonitor:
         self._prev_disk_io = None
         self._monitor_thread = None
         self._stop_event = None
+        self._disk_warn_logged = False
 
     def start(self):
         """Start continuous background monitoring."""
@@ -256,10 +280,10 @@ class SystemMonitor:
                 found_devices.append(device)
 
         if not found_devices:
-            # None of our devices found - fall back to aggregate
-            # This likely means device name mismatch between detection and psutil
-            print(f"Warning: Devices {self.devices} not found in psutil. "
-                  f"Available: {list(all_counters.keys())[:10]}... Falling back to system-wide aggregate.")
+            if not self._disk_warn_logged:
+                self._disk_warn_logged = True
+                print(f"Warning: Devices {self.devices} not found in psutil. "
+                      f"Available: {list(all_counters.keys())[:10]}. Falling back to system-wide aggregate.")
             return psutil.disk_io_counters()
 
         # Return a named tuple-like object with the aggregated values
