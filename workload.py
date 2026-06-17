@@ -58,8 +58,6 @@ recomputed.  Delete the gt_cache/ directory to force recomputation.
 
 import argparse
 import csv
-import multiprocessing as mp
-import os
 import time
 from pathlib import Path
 
@@ -98,19 +96,6 @@ def _metric_op(metric: str) -> str:
 # Ground-truth computation
 # ---------------------------------------------------------------------------
 
-# Module-level state set in the parent before forking; workers inherit via COW.
-_gt_index = None
-_gt_live_ids = None
-
-
-def _gt_worker(args):
-    """Search one query shard against the inherited FAISS index."""
-    q_chunk, k = args
-    os.environ["OMP_NUM_THREADS"] = "1"   # prevent BLAS over-subscription per worker
-    _, pos = _gt_index.search(q_chunk, k)
-    return _gt_live_ids[pos]
-
-
 def compute_gt(live_ids: np.ndarray, train_data, queries: np.ndarray,
                top_k: int, metric: str, n_workers: int = 1) -> np.ndarray:
     """
@@ -119,12 +104,10 @@ def compute_gt(live_ids: np.ndarray, train_data, queries: np.ndarray,
     live_ids:  sorted int32 array of live row IDs (FAISS position i → DB id live_ids[i])
     train_data: sliceable dataset array            (train_data[id] = float32 vector)
     queries:   (n_queries, D) float32
-    n_workers: number of forked processes for parallel query search (fork/COW —
-               the FAISS index is built once and inherited read-only by workers)
+    n_workers: OMP threads passed to faiss.omp_set_num_threads — FAISS parallelises
+               the search across queries internally, no subprocess overhead.
     Returns gt: (n_queries, top_k) int32 — DB row IDs for each query's neighbours
     """
-    global _gt_index, _gt_live_ids
-
     vecs = train_data[live_ids]
     if vecs.dtype != np.float32:
         vecs = vecs.astype(np.float32)
@@ -145,20 +128,9 @@ def compute_gt(live_ids: np.ndarray, train_data, queries: np.ndarray,
         index = faiss.IndexFlatL2(D)
         index.add(vecs)
 
-    if n_workers <= 1:
-        _, positions = index.search(q, top_k)
-        return live_ids[positions]
-
-    # Parallel search: set module globals, fork workers that inherit via COW.
-    _gt_index = index
-    _gt_live_ids = live_ids
-    chunks = np.array_split(q, n_workers)
-    ctx = mp.get_context("fork")
-    with ctx.Pool(n_workers) as pool:
-        parts = pool.map(_gt_worker, [(c, top_k) for c in chunks])
-    _gt_index = None   # release reference
-    _gt_live_ids = None
-    return np.vstack(parts)
+    faiss.omp_set_num_threads(n_workers)
+    _, positions = index.search(q, top_k)
+    return live_ids[positions]
 
 
 # ---------------------------------------------------------------------------
