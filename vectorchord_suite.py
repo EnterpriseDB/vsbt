@@ -30,6 +30,8 @@ class TestSuite(common.TestSuite):
     residual quantization for approximate nearest neighbor searches.
     """
 
+    extension = "vectorchord"
+
     METRIC_OPS = {
         "l2": "vector_l2_ops",
         "euclidean": "vector_l2_ops",

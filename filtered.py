@@ -50,41 +50,16 @@ import time
 from pathlib import Path
 
 import numpy as np
-import psycopg
-import pgvector.psycopg
 from tqdm import tqdm
 
 import datasets
 from loader import load_vectors_with_labels
 
-
-# ---------------------------------------------------------------------------
-# Metric helpers
-# ---------------------------------------------------------------------------
-
-_METRIC_OPS = {
-    "l2": "<->", "euclidean": "<->",
-    "cos": "<=>",
-    "ip":  "<#>", "dot": "<#>",
-}
-
 _METRIC_INDEX_OPS = {
     "l2": "vector_l2_ops", "euclidean": "vector_l2_ops",
     "cos": "vector_cosine_ops",
-    "ip":  "vector_ip_ops",  "dot": "vector_ip_ops",
+    "ip": "vector_ip_ops", "dot": "vector_ip_ops",
 }
-
-
-def _detect_suite(config: dict) -> str:
-    """Return 'pgvector' or 'vectorchord' based on config keys."""
-    if "m" in config:
-        return "pgvector"
-    if "lists" in config:
-        return "vectorchord"
-    raise ValueError(
-        "Cannot detect suite type: config must have 'm' (pgvector HNSW) "
-        "or 'lists' (VectorChord)."
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -223,7 +198,11 @@ def _run_benchmark_point(conn, table_name: str, queries: np.ndarray,
 # ---------------------------------------------------------------------------
 
 def run_filtered(suite_name: str, config: dict, url: str,
-                 chunk_size: int = 500_000, num_threads: int = 4) -> None:
+                 chunk_size: int = 500_000, num_threads: int = 4,
+                 suite=None) -> None:
+    if suite is None:
+        raise ValueError("suite must be provided; pass suite=self from the suite runner")
+
     selectivity      = config.get("selectivity")
     if selectivity is None:
         raise ValueError(f"{suite_name}: filtered mode requires a 'selectivity' key")
@@ -232,11 +211,11 @@ def run_filtered(suite_name: str, config: dict, url: str,
     top_k            = config.get("top", 10)
     pg_workers       = config.get("pg_parallel_workers")
     benchmarks       = config.get("benchmarks", {})
-    suite            = _detect_suite(config)
-    metric_op        = _METRIC_OPS[metric]
+    ext_suite        = suite.extension
+    metric_op        = suite._get_metric_operator(metric)
     table_name       = suite_name.replace("-", "_").replace(".", "_")
 
-    print(f"\n[filtered] {suite_name}  suite={suite}  "
+    print(f"\n[filtered] {suite_name}  suite={ext_suite}  "
           f"selectivity={selectivity}%  metric={metric}")
 
     # --- Load dataset ---
@@ -256,8 +235,7 @@ def run_filtered(suite_name: str, config: dict, url: str,
     print(f"  N={N:,}  D={D}  Q={queries.shape[0]}  "
           f"live={int(filter_labels.sum()):,} ({float(filter_labels.mean())*100:.2f}%)")
 
-    conn = psycopg.connect(url, autocommit=True)
-    pgvector.psycopg.register_vector(conn)
+    conn = suite.create_connection()
 
     # --- Table ---
     _create_table(conn, table_name, D, pg_workers)
@@ -266,7 +244,7 @@ def run_filtered(suite_name: str, config: dict, url: str,
     print("Loading vectors with filter labels...")
     pbar = tqdm(total=N, unit=" rows", ncols=80)
     load_vectors_with_labels(
-        conn_factory=lambda: psycopg.connect(url, autocommit=True),
+        conn_factory=suite.create_connection,
         table_name=table_name,
         data=train,
         labels=filter_labels,
@@ -278,7 +256,7 @@ def run_filtered(suite_name: str, config: dict, url: str,
     pbar.close()
 
     # --- Index ---
-    _create_index(conn, table_name, config, suite, pg_workers)
+    _create_index(conn, table_name, config, ext_suite, pg_workers)
 
     # --- Prewarm ---
     try:
@@ -298,7 +276,7 @@ def run_filtered(suite_name: str, config: dict, url: str,
         print(f"\nRunning {len(benchmarks)} benchmark point(s)...")
         for bench_name, bench_cfg in benchmarks.items():
             metrics = _run_benchmark_point(
-                conn, table_name, queries, gt, top_k, metric_op, bench_cfg, suite
+                conn, table_name, queries, gt, top_k, metric_op, bench_cfg, ext_suite
             )
             print(f"  {bench_name:20s}  recall={metrics['recall']:.4f}  "
                   f"QPS={metrics['qps']:.1f}  P50={metrics['p50_ms']:.2f}ms")

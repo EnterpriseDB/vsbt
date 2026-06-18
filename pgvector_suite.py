@@ -344,6 +344,8 @@ class TestSuite(common.TestSuite):
     the YAML `indexType` field via INDEX_SPECS. The HNSW path produces
     byte-identical SQL/GUCs/reports to upstream."""
 
+    extension = "pgvector"
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # All sub-configs in one YAML must agree on indexType — the suite

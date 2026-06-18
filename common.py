@@ -1195,7 +1195,8 @@ class TestSuite:
                 from filtered import run_filtered
                 run_filtered(suite_name, self.config[suite_name], self.url,
                              chunk_size=self.chunk_size,
-                             num_threads=self.max_load_threads)
+                             num_threads=self.max_load_threads,
+                             suite=self)
             else:
                 self.run_suite(suite_name)
         self.generate_markdown_result()
