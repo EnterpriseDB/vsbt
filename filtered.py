@@ -102,7 +102,7 @@ def _create_index(conn, table_name: str, config: dict, suite: str,
             f"CREATE INDEX ON {table_name} USING hnsw (embedding {ops}) "
             f"WITH (m = {m}, ef_construction = {efc})"
         )
-    else:  # vectorchord
+    elif suite == "vectorchord":
         lists = config["lists"]
         sf    = config.get("samplingFactor", 256)
         rq    = str(config.get("residual_quantization", True)).lower()
@@ -121,6 +121,8 @@ spherical_centroids = {spherical}
             f"CREATE INDEX ON {table_name} USING vchordrq (embedding {ops}) "
             f"WITH (options = $${ivf_config}$$)"
         )
+    else:
+        raise ValueError(f"No index creation defined for extension: {suite!r}")
 
     elapsed = time.perf_counter() - t0
     print(f"  done in {elapsed:.1f}s")
@@ -142,13 +144,15 @@ def _apply_gucs(conn, benchmark: dict, suite: str):
         if mst:
             conn.execute(f"SET hnsw.max_scan_tuples = {mst}")
         conn.execute("SET enable_seqscan = off")
-    else:  # vectorchord
+    elif suite == "vectorchord":
         nprob   = benchmark.get("nprob", "10,20")
         epsilon = benchmark.get("epsilon", 1.0)
         conn.execute(f"SET vchordrq.probes = '{nprob}'")
         conn.execute(f"SET vchordrq.epsilon = {epsilon}")
         conn.execute("SET vchordrq.prefilter = on")
         conn.execute("SET enable_seqscan = off")
+    else:
+        raise ValueError(f"No filtered GUCs defined for extension: {suite!r}")
 
 
 # ---------------------------------------------------------------------------
