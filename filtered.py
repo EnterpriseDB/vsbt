@@ -103,17 +103,19 @@ def _create_index(conn, table_name: str, config: dict, suite: str,
             f"WITH (m = {m}, ef_construction = {efc})"
         )
     elif suite == "vectorchord":
-        lists = config["lists"]
-        sf    = config.get("samplingFactor", 256)
-        rq    = str(config.get("residual_quantization", True)).lower()
-        lstr  = f"[{lists[0]}, {lists[1]}]" if isinstance(lists, list) else str(lists)
-        spherical = "true" if metric in ("cos", "ip", "dot") else "false"
+        lists         = config["lists"]
+        sf            = config.get("samplingFactor", 256)
+        rq            = str(config.get("residual_quantization", True)).lower()
+        build_threads = workers or 1
+        lstr          = f"[{lists[0]}, {lists[1]}]" if isinstance(lists, list) else str(lists)
+        spherical     = "true" if metric in ("cos", "ip", "dot") else "false"
         ivf_config = f"""
 residual_quantization = {rq}
 build.pin = 2
 
 [build.internal]
 lists = {lstr}
+build_threads = {build_threads}
 sampling_factor = {sf}
 spherical_centroids = {spherical}
 """
