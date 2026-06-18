@@ -234,7 +234,7 @@ def run_filtered(suite_name: str, config: dict, url: str,
     benchmarks       = config.get("benchmarks", {})
     suite            = _detect_suite(config)
     metric_op        = _METRIC_OPS[metric]
-    table_name       = suite_name.replace("-", "_")
+    table_name       = suite_name.replace("-", "_").replace(".", "_")
 
     print(f"\n[filtered] {suite_name}  suite={suite}  "
           f"selectivity={selectivity}%  metric={metric}")
