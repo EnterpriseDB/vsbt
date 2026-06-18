@@ -14,21 +14,21 @@ DATA_DIR = os.environ.get("DATASET_LOCAL_DIR", "./datasets")
 DATASETS = {
     # --- Standard HDF5 Datasets ---
     "laion-5m-test-ip": {
-        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion-5m-test-ip.hdf5",
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion/5m/base.hdf5",
         "metric": "ip",
         "type": "hdf5",
         "dim": 768,
         "num": 5_000_000
     },
     "laion-20m-test-ip": {
-        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion-20m-test-ip.hdf5",
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion/20m/base.hdf5",
         "metric": "ip",
         "type": "hdf5",
         "dim": 768,
         "num": 20_000_000
     },
     "laion-100m-test-ip": {
-        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion-100m-test-ip.hdf5",
+        "url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion/100m/base.hdf5",
         "metric": "ip",
         "type": "hdf5",
         "dim": 768,
@@ -72,7 +72,7 @@ DATASETS = {
         "num": 400_000_000,
         "base_dir": os.path.join(DATA_DIR, "laion-400m/"),
         # Link to the file you just salvaged and uploaded
-        "gt_url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion/laion_400m_gt.npy",
+        "gt_url": "https://enterprisedb-vector-datasets.s3.amazonaws.com/laion/400m/gt.npy",
         "gt_file": "laion_400m_gt.npy"
     },
 
@@ -151,9 +151,9 @@ DATASETS = {
         "base_dir": os.path.join(DATA_DIR, "deep1b"),
         # Direct URLs to your pre-converted NPY files and the IBIN ground truth
         "urls": {
-            "base": "https://enterprisedb-vector-datasets.s3.amazonaws.com/deep1B/deep1b_base.npy",
-            "query": "https://enterprisedb-vector-datasets.s3.amazonaws.com/deep1B/deep1b_queries.npy",
-            "groundtruth": "https://enterprisedb-vector-datasets.s3.amazonaws.com/deep1B/deep1b_groundtruth.npy"
+            "base": "https://enterprisedb-vector-datasets.s3.amazonaws.com/deep1b/1b/base.npy",
+            "query": "https://enterprisedb-vector-datasets.s3.amazonaws.com/deep1b/1b/queries.npy",
+            "groundtruth": "https://enterprisedb-vector-datasets.s3.amazonaws.com/deep1b/1b/groundtruth.npy"
         },
         # Local filenames to save them as
         "files": {
@@ -238,8 +238,7 @@ def download_laion_parts(limit=409, max_workers=None):
 
 def _load_hdf5_dataset(name, info):
     """Handles standard HDF5 benchmark datasets."""
-    file_name = Path(info["url"]).name
-    file_path = os.path.join(DATA_DIR, file_name)
+    file_path = os.path.join(DATA_DIR, f"{name}.hdf5")
     download_http_file(info["url"], file_path)
 
     f = h5py.File(file_path, "r")
