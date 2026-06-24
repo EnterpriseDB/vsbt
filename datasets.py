@@ -105,6 +105,7 @@ DATASETS = {
         "metric": "cos",
         "dim": 1536,
         "num": 5_000_000,
+        "num_shards": 10,
         "s3_prefix": "s3://enterprisedb-vector-datasets/openai/5m",
         "base_dir": os.path.join(DATA_DIR, "openai/5m"),
     },
@@ -362,10 +363,10 @@ def _s3_prefix_to_http_url(s3_prefix, filename):
     return f"https://{bucket}.s3.amazonaws.com/{key}/{filename}"
 
 
-def _expected_parquet_files(num):
+def _expected_parquet_files(num, num_shards=None):
     """Return the list of expected parquet filenames for a dataset of size `num`."""
     files = ["test.parquet", "neighbors.parquet"]
-    file_count = max(1, num // 1_000_000)
+    file_count = num_shards if num_shards is not None else max(1, num // 1_000_000)
     if file_count == 1:
         files.append("shuffle_train.parquet")
     else:
@@ -374,7 +375,7 @@ def _expected_parquet_files(num):
     return files
 
 
-def _download_parquet_from_s3(s3_prefix, base_dir, num):
+def _download_parquet_from_s3(s3_prefix, base_dir, num, num_shards=None):
     """Download parquet dataset files from S3 if not already present."""
     import shutil
     import subprocess
@@ -404,7 +405,7 @@ def _download_parquet_from_s3(s3_prefix, base_dir, num):
     else:
         print(f"Warning: aws CLI not found, downloading via HTTP (install aws CLI for faster parallel downloads)...")
 
-    for filename in _expected_parquet_files(num):
+    for filename in _expected_parquet_files(num, num_shards):
         dest = os.path.join(base_dir, filename)
         if os.path.exists(dest):
             continue
@@ -417,7 +418,7 @@ def _load_parquet(name, info):
     base_dir = info["base_dir"]
 
     if info.get("s3_prefix") and not os.path.exists(os.path.join(base_dir, "test.parquet")):
-        _download_parquet_from_s3(info["s3_prefix"], base_dir, info["num"])
+        _download_parquet_from_s3(info["s3_prefix"], base_dir, info["num"], info.get("num_shards"))
 
     if not os.path.exists(base_dir):
         raise FileNotFoundError(f"Dataset directory not found: {base_dir}")
