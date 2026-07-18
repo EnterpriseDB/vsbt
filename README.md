@@ -9,7 +9,6 @@ A comprehensive benchmarking tool for PostgreSQL vector search extensions. Compa
 | **[pgvector](https://github.com/pgvector/pgvector)** | [HNSW](https://arxiv.org/abs/1603.09320) | Standard CPU-based approximate nearest neighbor search |
 | **[pgvector](https://github.com/pgvector/pgvector)** | IVFFlat | Inverted-file index over the float vector column |
 | **[pgvector](https://github.com/pgvector/pgvector)** | IVFFlat BQ + Rerank | IVFFlat over `binary_quantize(embedding)` with full-precision rerank |
-| **[pgvector](https://github.com/pgvector/pgvector)** + **edb_vectorplus** | ivfplus | RaBitQ-quantized IVF hierarchy with optional structured-Hadamard rotation, dispatched via `pgvector_suite.py` (`indexType: ivfplus`) |
 | **[vchordq](https://github.com/tensorchord/VectorChord)** | [IVF-RaBitQ](https://arxiv.org/abs/2405.12497) ([VectorChord](https://blog.vectorchord.ai/scaling-vector-search-to-1-billion-on-postgresql)) | High dimensionality & high performance vector quantization & compression |
 | **[pgpu](https://github.com/EnterpriseDB/pgpu)** | IVF-RaBitQ (VectorChord) | GPU-accelerated index building for VectorChord |
 
@@ -77,13 +76,8 @@ pip install -r requirements.txt
 Depending on which benchmark suite you want to run:
 
 ```sql
--- For pgvector benchmarks (HNSW / IVFFlat / IVFFlat-BQ-Rerank)
+-- For pgvector benchmarks
 CREATE EXTENSION IF NOT EXISTS vector;
-CREATE EXTENSION IF NOT EXISTS pg_prewarm;
-
--- For pgvector benchmarks using edb_vectorplus's ivfplus access method
--- (indexType: ivfplus) -- CASCADE pulls in `vector` automatically
-CREATE EXTENSION IF NOT EXISTS edb_vectorplus CASCADE;
 CREATE EXTENSION IF NOT EXISTS pg_prewarm;
 
 -- For VectorChord benchmarks
@@ -135,14 +129,11 @@ python pgvector_suite.py -s config/laion-5m-test-ip/pgvector-ivfflat-4k.yaml
 # IVFFlat with binary quantization + exact rerank: indexType: ivfflat_bq_rerank
 python pgvector_suite.py -s config/openai-5m-cos/pgvector-ivfflat-bq-rerank-2k.yaml
 
-# edb_vectorplus's ivfplus access method: indexType: ivfplus
-python pgvector_suite.py -s config/openai-5m-cos/edb_vectorplus-ivfplus-2236.yaml
-
 # Skip loading if data already exists
 python pgvector_suite.py -s config/laion-5m-test-ip/pgvector-m16-128.yaml --skip-add-embeddings
 ```
 
-The same `pgvector_suite.py` entry point dispatches HNSW / IVFFlat / IVFFlat-BQ-Rerank / ivfplus based on the `indexType` field in the YAML (defaults to `hnsw` when absent).
+The same `pgvector_suite.py` entry point dispatches HNSW / IVFFlat / IVFFlat-BQ-Rerank based on the `indexType` field in the YAML (defaults to `hnsw` when absent).
 
 ### Running VectorChord Benchmarks
 
@@ -332,30 +323,6 @@ pgvector-ivfflat-bq-rerank-openai-5m-2k:
     "400": { probes: 400 }
 ```
 
-edb_vectorplus's `ivfplus` access method (`indexType: ivfplus`). `lists` is the only build knob (derives the whole RaBitQ hierarchy internally); `rotation` defaults to `true`. `probes` is the only benchmark-swept GUC — `iterative_scan`, `max_probes`, and `hierarchy_threshold` are fixed, optional, suite-level settings applied to every connection.
-
-```yaml
-pgvector-ivfplus-openai-5m-2236:
-  indexType: ivfplus
-  dataset: openai-5m-cos
-  datasetType: parquet
-  metric: cos
-  lists: 2236  # ~sqrt(5M)
-  rotation: true
-  maintenance_work_mem: 4GB
-  pg_parallel_workers: 32
-  top: 10
-  # iterative_scan: relaxed_order       # off | relaxed_order | strict_order
-  # max_probes: 2000
-  # hierarchy_threshold: 4
-  benchmarks:
-    "20":  { probes: 20 }
-    "40":  { probes: 40 }
-    "80":  { probes: 80 }
-    "150": { probes: 150 }
-    "300": { probes: 300 }
-```
-
 ### VectorChord Configuration Example
 
 ```yaml
@@ -524,7 +491,7 @@ vector-search/
 ├── results.py                # Results management and visualization
 ├── compare_runs.py           # Historical benchmark comparison utility
 ├── chart_compare.py          # Cross-run comparison chart generator
-├── pgvector_suite.py         # pgvector HNSW / IVFFlat / IVFFlat-BQ-Rerank / ivfplus benchmarks
+├── pgvector_suite.py         # pgvector HNSW benchmarks
 ├── vectorchord_suite.py      # VectorChord IVF benchmarks
 ├── pgpu_suite.py             # GPU-accelerated benchmarks
 ├── requirements.txt          # Python dependencies
