@@ -2,9 +2,10 @@
 pgvector Benchmark Suite
 
 Benchmarks vector search using the pgvector extension with HNSW or
-IVFFlat indexes (vanilla and BQ + rerank variants) for PostgreSQL.
+IVFFlat indexes (vanilla and BQ + rerank variants), plus the
+edb_vectorplus extension's ivfplus access method, for PostgreSQL.
 
-A single TestSuite handles all three index types. The per-index
+A single TestSuite handles all four index types. The per-index
 variation lives in INDEX_SPECS — small functions that build the CREATE
 INDEX statement, the per-benchmark session GUCs, and the per-benchmark
 query template. Everything else (warmup, sequential / parallel
@@ -231,7 +232,54 @@ def _bq_rerank_debug_print(config, dataset):
     print()
 
 
+def _ivfplus_session_gucs(benchmark):
+    return [
+        f"SET ivfplus.probes = {benchmark['probes']}",
+        "SET enable_seqscan = off",
+    ]
+
+
+def _ivfplus_fixed_gucs(config: dict) -> list[str]:
+    """Optional, suite-level fixed GUCs for ivfplus — set once per suite
+    (not swept per benchmark point) and applied on top of the per-benchmark
+    `probes` GUC above."""
+    stmts = []
+    iterative_scan = config.get("iterative_scan")
+    if iterative_scan is not None:
+        stmts.append(f"SET ivfplus.iterative_scan = '{iterative_scan}'")
+    max_probes = config.get("max_probes")
+    if max_probes is not None:
+        stmts.append(f"SET ivfplus.max_probes = {max_probes}")
+    hierarchy_threshold = config.get("hierarchy_threshold")
+    if hierarchy_threshold is not None:
+        stmts.append(f"SET ivfplus.hierarchy_threshold = {hierarchy_threshold}")
+    return stmts
+
+
+def _ivfplus_create_index_sql(table_name, config, dataset):
+    lists = _ivfflat_resolve_lists(config, dataset)
+    metric_func = _metric_func(dataset["metric"])
+    rotation_sql = "true"
+    return (
+        f"CREATE INDEX {table_name}_embedding_idx ON {table_name} "
+        f"USING ivfplus (embedding {metric_func}) "
+        f"WITH (lists = {lists}, rotation = {rotation_sql})"
+    )
+
+
+def _ivfplus_debug_print(config, dataset):
+    lists = _ivfflat_resolve_lists(config, dataset)
+    print(f"\n🔧 Index Configuration (ivfplus):")
+    print(f"    • Lists:           {lists}")
+    print(f"    • Metric Function: {_metric_func(dataset['metric'])}")
+    print()
+
+
 _IVFFLAT_CONFIG_COLUMNS = (
+    ("Lists", lambda c, r: str(c.get("lists", r.get("lists", "N/A")))),
+)
+
+_IVFPLUS_CONFIG_COLUMNS = (
     ("Lists", lambda c, r: str(c.get("lists", r.get("lists", "N/A")))),
 )
 
@@ -274,6 +322,18 @@ INDEX_SPECS = {
             ("rerank_limit_amplify_factor", "Rerank Amp"),
         ),
         config_columns=_IVFFLAT_CONFIG_COLUMNS,
+    ),
+    "ivfplus": IndexSpec(
+        index_type="ivfplus",
+        suite_type="edb_vectorplus",
+        # Identical single-stage query shape to IVFFlat — reused as-is.
+        query_template=_ivfflat_query_template,
+        bind_kind="single",
+        session_gucs=_ivfplus_session_gucs,
+        create_index_sql=_ivfplus_create_index_sql,
+        debug_print=_ivfplus_debug_print,
+        bench_param_columns=(("probes", "Probes"),),
+        config_columns=_IVFPLUS_CONFIG_COLUMNS,
     ),
 }
 
@@ -340,9 +400,10 @@ def build_arg_parse():
 
 
 class TestSuite(common.TestSuite):
-    """Single suite for HNSW / IVFFlat / IVFFlat-BQ-Rerank, dispatched by
-    the YAML `indexType` field via INDEX_SPECS. The HNSW path produces
-    byte-identical SQL/GUCs/reports to upstream."""
+    """Single suite for HNSW / IVFFlat / IVFFlat-BQ-Rerank / ivfplus
+    (edb_vectorplus), dispatched by the YAML `indexType` field via
+    INDEX_SPECS. The HNSW path produces byte-identical SQL/GUCs/reports
+    to upstream."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -363,6 +424,11 @@ class TestSuite(common.TestSuite):
             )
         self.spec = INDEX_SPECS[index_type]
         self._batch_dataset = None
+        # ivfplus-only: optional, suite-level fixed GUCs (iterative_scan /
+        # max_probes / hierarchy_threshold), populated in run_benchmarks()
+        # since apply_session_guc/make_batch_args don't receive suite_name.
+        # Stays empty (harmless no-op) for every other index type.
+        self._ivfplus_fixed_gucs_cache: list[str] = []
 
     def create_connection(self):
         """Create a database connection with pgvector support."""
@@ -375,7 +441,11 @@ class TestSuite(common.TestSuite):
         conn = super().create_connection()
         # Surface server NOTICEs in vsbt output
         conn.add_notice_handler(common.psql_log_handler)
-        conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+        if self.spec.index_type == "ivfplus":
+            # CASCADE pulls in pgvector's `vector` extension automatically.
+            conn.execute("CREATE EXTENSION IF NOT EXISTS edb_vectorplus CASCADE")
+        else:
+            conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
         conn.execute("CREATE EXTENSION IF NOT EXISTS pg_prewarm")
         conn.close()
         self.debug_log("Extensions initialized successfully.")
@@ -540,13 +610,23 @@ class TestSuite(common.TestSuite):
             query_sql,
             self.spec.bind_kind,
             rerank_limit,
-            self.spec.session_gucs(benchmark),
+            self.spec.session_gucs(benchmark) + self._ivfplus_fixed_gucs_cache,
             self.url,
             warmup_n,
         )
 
+    def run_benchmarks(self, suite_name, table_name, dataset, query_clients):
+        """Stash ivfplus's optional, suite-level fixed GUCs before the
+        benchmark loop starts. No-op (empty list) for every other index
+        type."""
+        if self.spec.index_type == "ivfplus":
+            self._ivfplus_fixed_gucs_cache = _ivfplus_fixed_gucs(self.config[suite_name])
+        return super().run_benchmarks(suite_name, table_name, dataset, query_clients)
+
     def apply_session_guc(self, conn, benchmark):
         for stmt in self.spec.session_gucs(benchmark):
+            conn.execute(stmt)
+        for stmt in self._ivfplus_fixed_gucs_cache:
             conn.execute(stmt)
 
     def warmup_query(self, table_name, dataset, metric_ops, top, benchmark):
@@ -556,7 +636,7 @@ class TestSuite(common.TestSuite):
 
     def create_index(self, suite_name: str, table_name: str, dataset: dict) -> None:
         """Create the pgvector index for this suite's IndexSpec
-        (HNSW, IVFFlat, or IVFFlat-BQ-Rerank)."""
+        (HNSW, IVFFlat, IVFFlat-BQ-Rerank, or ivfplus)."""
         event, index_monitor_thread = super().create_index(
             suite_name, table_name, dataset
         )
@@ -583,6 +663,8 @@ class TestSuite(common.TestSuite):
             self.results[suite_name]["lists"] = _ivfflat_resolve_lists(
                 config, dataset
             )
+            if self.spec.index_type == "ivfplus":
+                self.results[suite_name]["rotation"] = True
 
         if self.debug:
             self.spec.debug_print(config, dataset)

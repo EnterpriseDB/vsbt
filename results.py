@@ -161,6 +161,7 @@ class ResultsManager:
             "sampling_factor": config.get("samplingFactor", "N/A"),
             "nprob": benchmark_config.get("nprob", "N/A"),
             "epsilon": benchmark_config.get("epsilon", "N/A"),
+            "probes": benchmark_config.get("probes", "N/A"),
             "residual_quantization": config.get("residual_quantization", "N/A"),
             "build_threads": results.get("build_threads", "N/A"),
             "load_time_s": results.get("load_time", "N/A"),
@@ -412,9 +413,10 @@ class ResultsManager:
                     ["Build Threads", str(results.get("build_threads", "N/A"))],
                     ["K-means Hierarchical", str(config.get("kmeans_hierarchical", "N/A"))],
                 ])
-        elif suite_type in ("pgvector-ivfflat", "pgvector-ivfflat-bq-rerank"):
-            # New pgvector index types ship their own column specs; the
-            # caller passes config_columns from the suite. Each entry is
+        elif suite_type in ("pgvector-ivfflat", "pgvector-ivfflat-bq-rerank", "edb_vectorplus"):
+            # New pgvector index types (and other new suite_types) ship
+            # their own column specs; the caller passes config_columns
+            # from the suite. Each entry is
             # (label, extractor(config_dict, results_dict) -> str).
             for label, extractor in (config_columns or []):
                 config_rows.append([label, extractor(config, results)])
@@ -438,7 +440,7 @@ class ResultsManager:
 
         # --- Benchmark Results ---
         benchmarks = config.get("benchmarks", {})
-        is_ivfflat = suite_type in ("pgvector-ivfflat", "pgvector-ivfflat-bq-rerank")
+        is_ivfflat = suite_type in ("pgvector-ivfflat", "pgvector-ivfflat-bq-rerank", "edb_vectorplus")
         bench_cols = bench_columns if is_ivfflat else None
         bench_rows = []
         for bench_name, bench_config in benchmarks.items():
@@ -587,7 +589,7 @@ class ResultsManager:
         # --- Benchmark Results (unified table across all runs, ordered by timestamp) ---
         lines.extend(["", "---", "", "## Benchmark Results", ""])
 
-        is_ivfflat = suite_type in ("pgvector-ivfflat", "pgvector-ivfflat-bq-rerank")
+        is_ivfflat = suite_type in ("pgvector-ivfflat", "pgvector-ivfflat-bq-rerank", "edb_vectorplus")
         bench_cols = bench_columns if is_ivfflat else None
 
         bench_rows = []
