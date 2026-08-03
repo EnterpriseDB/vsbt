@@ -74,6 +74,7 @@ def get_series_data(rows: list[dict], run_id: str) -> dict:
             meta = {
                 "test_name": row["test_name"],
                 "suite_type": row["suite_type"],
+                "dataset": row.get("dataset", "N/A"),
                 "shared_buffers": row.get("shared_buffers", "N/A"),
                 "fs_cache": row.get("fs_cache", "True"),
                 "m": row.get("m", "N/A"),
@@ -145,6 +146,12 @@ def plot_comparison(series_list: list[dict], output: Path, chart_type: str = "qp
     y_key = "qps" if chart_type == "qps" else "p99"
     y_label = "QPS" if chart_type == "qps" else "P99 Latency (ms)"
     title_suffix = "Recall vs QPS" if chart_type == "qps" else "Recall vs P99 Latency"
+    datasets = []
+    for series in series_list:
+        ds = series["meta"].get("dataset", "N/A")
+        if ds not in datasets:
+            datasets.append(ds)
+    dataset_label = ", ".join(datasets) if datasets else "N/A"
 
     for i, series in enumerate(series_list):
         meta = series["meta"]
@@ -184,6 +191,8 @@ def plot_comparison(series_list: list[dict], output: Path, chart_type: str = "qp
     ax.set_xlabel("Recall", fontsize=12)
     ax.set_ylabel(y_label, fontsize=12)
     ax.set_title(title_suffix, fontsize=14)
+    if dataset_label != "N/A":
+        ax.set_title(f"{title_suffix}\nDataset: {dataset_label}", fontsize=14)
     ax.grid(True, alpha=0.3)
     ax.legend(loc="best", fontsize=9)
 
