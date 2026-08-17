@@ -244,6 +244,34 @@ def calculate_metrics(
     return recall, qps, p50, p99
 
 
+# Set by TestSuite.parallel_bench() in the parent process, immediately
+# before mp.Pool forks its workers. multiprocessing's default start method
+# on Linux is "fork" (unmodified anywhere in this codebase) -- a forked
+# child inherits the entire parent address space via copy-on-write, so a
+# module global set here is visible to every worker at zero serialization
+# cost. This exists because every client in a parallel_bench run executes
+# an identical batch (same test/answer arrays, same benchmark params), but
+# passing that batch through Pool's per-task IPC (the previous approach)
+# re-pickles and re-transmits a full copy of it once per requested client
+# -- for datasets like laion-5m, test+answer alone is ~220MB, so at 512
+# clients that's ~110GB of redundant serialization work, done by the
+# parent's single-threaded task feeder. That serial feeder becomes the
+# real concurrency-limiting resource, independent of --query-clients.
+_PARALLEL_BATCH = None
+_PARALLEL_PROCESS_FN = None
+
+
+def _dispatch_parallel_batch(_worker_index):
+    """Task function fed to Pool.imap_unordered in place of process_batch.
+
+    Ignores its argument (imap_unordered still needs an iterable the length
+    of query_clients, but a bare int is essentially free to pickle) and
+    calls the real per-suite process_batch against the batch installed in
+    _PARALLEL_BATCH before the pool was created.
+    """
+    return _PARALLEL_PROCESS_FN(_PARALLEL_BATCH)
+
+
 class TestSuite:
     """Base class for test suites."""
 
@@ -887,38 +915,50 @@ class TestSuite:
         print(f"Running parallel benchmark with {query_clients} clients × {m} queries = {total_queries:,} total"
               + (f" (warmup_n={warmup_n}/worker)" if warmup_n else ""))
 
-        batches = []
-        for _ in range(query_clients):
-            batch = self.make_batch_args(
-                test, answer, top, metric, table_name, benchmark,
-                warmup_n=warmup_n,
-            )
-            batches.append(batch)
+        # Every client runs the identical batch -- build it once and install
+        # it as a fork-inherited global (see _dispatch_parallel_batch) rather
+        # than constructing and pickling `query_clients` separate copies of
+        # it through the Pool. Must be set before mp.Pool() below, since
+        # that's the moment workers actually fork.
+        global _PARALLEL_BATCH, _PARALLEL_PROCESS_FN
+        _PARALLEL_BATCH = self.make_batch_args(
+            test, answer, top, metric, table_name, benchmark,
+            warmup_n=warmup_n,
+        )
+        _PARALLEL_PROCESS_FN = self.__class__.process_batch
 
         all_results = []
         pbar = tqdm(total=total_queries, ncols=80,
                     bar_format="{desc} {n}/{total}: {percentage:3.0f}%|{bar}|")
 
-        with mp.Pool(processes=query_clients) as pool:
-            for batch_result in pool.imap_unordered(self.__class__.process_batch, batches):
-                all_results.extend(batch_result)
+        try:
+            with mp.Pool(processes=query_clients) as pool:
+                for batch_result in pool.imap_unordered(_dispatch_parallel_batch, range(query_clients)):
+                    all_results.extend(batch_result)
 
-                # Update progress and stats
-                completed = len(all_results)
-                pbar.n = completed
-                pbar.refresh()
+                    # Update progress and stats
+                    completed = len(all_results)
+                    pbar.n = completed
+                    pbar.refresh()
 
-                # Calculate current metrics
-                if completed > 0:
-                    hits = sum(r[0] for r in all_results)
-                    recall = hits / (top * completed)
-                    total_time = calculate_coverage([r[1] for r in all_results])
-                    qps = completed / total_time
-                    latencies = [(r[1][1] - r[1][0]) for r in all_results]
-                    p50 = np.percentile(latencies, 50) * 1000
+                    # Calculate current metrics
+                    if completed > 0:
+                        hits = sum(r[0] for r in all_results)
+                        recall = hits / (top * completed)
+                        total_time = calculate_coverage([r[1] for r in all_results])
+                        qps = completed / total_time
+                        latencies = [(r[1][1] - r[1][0]) for r in all_results]
+                        p50 = np.percentile(latencies, 50) * 1000
 
-                    recall_color = "\033[92m" if recall >= 0.95 else "\033[91m"
-                    pbar.set_description(f"recall: {recall_color}{recall:.4f}\033[0m QPS: {qps:.2f} P50: {p50:.2f}ms")
+                        recall_color = "\033[92m" if recall >= 0.95 else "\033[91m"
+                        pbar.set_description(f"recall: {recall_color}{recall:.4f}\033[0m QPS: {qps:.2f} P50: {p50:.2f}ms")
+        finally:
+            # Don't hold the (possibly large) arrays alive in module state
+            # once the pool's done, and don't let a stale batch leak into
+            # a differently-shaped run later in the same process (a single
+            # suite invocation loops parallel_bench once per benchmark point).
+            _PARALLEL_BATCH = None
+            _PARALLEL_PROCESS_FN = None
 
         pbar.close()
         return all_results, self._get_metric_operator(metric)
