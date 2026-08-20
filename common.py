@@ -2,6 +2,7 @@ import argparse
 import gc
 import multiprocessing as mp
 import os
+import random
 import re
 import threading
 import time
@@ -931,24 +932,75 @@ class TestSuite:
         pbar = tqdm(total=total_queries, ncols=80,
                     bar_format="{desc} {n}/{total}: {percentage:3.0f}%|{bar}|")
 
+        # The live progress readout below used to recompute recall/QPS/P50
+        # from scratch over the *entire* cumulative all_results list on every
+        # single worker completion (query_clients times per run): an O(N)
+        # rescan for hits, plus two O(N log N) sorts via calculate_coverage()
+        # and np.percentile(). With N growing to the full run size, a single
+        # one of these recomputes costs over a second once N reaches a few
+        # million (e.g. ~1.6s at 5.12M results -- measured directly), and
+        # query_clients of them fire over the run, so total overhead scales
+        # with query_clients * N -- effectively O(query_clients^2). On a
+        # 512-client run this added roughly 10 minutes of single-core churn
+        # *after* every backend had already finished, none of which affects
+        # the final reported metrics (calculate_metrics() below is a
+        # separate, one-time computation over the complete results).
+        #
+        # Fix: track recall/coverage/P50 incrementally instead of
+        # recomputing them from the full list every time.
+        #   - hits: a running counter, updated by O(batch_size) per batch
+        #     instead of an O(completed) rescan -- exact.
+        #   - coverage (total_time): approximated as the wall-clock span
+        #     (last end - first start) rather than the exact merged-interval
+        #     union, tracked with O(1) running min/max -- for any real
+        #     concurrent run this is only larger than true coverage during
+        #     brief gaps with zero in-flight queries, which is not the
+        #     steady state visualized in the live progress readout.
+        #   - P50: computed over a fixed-size reservoir sample of recent
+        #     latencies (reservoir sampling) rather than the full growing
+        #     list, so each computation is O(reservoir size), not O(N).
+        # None of this touches calculate_metrics() below, which still
+        # computes the final recall/QPS/P50/P99 exactly, once, over the
+        # complete results list.
+        running_hits = 0
+        running_min_start = None
+        running_max_end = None
+        RESERVOIR_SIZE = 20_000
+        reservoir: list[float] = []
+        reservoir_seen = 0
+
         try:
             with mp.Pool(processes=query_clients) as pool:
                 for batch_result in pool.imap_unordered(_dispatch_parallel_batch, range(query_clients)):
                     all_results.extend(batch_result)
+
+                    for hit, (start, end) in batch_result:
+                        running_hits += hit
+                        if running_min_start is None or start < running_min_start:
+                            running_min_start = start
+                        if running_max_end is None or end > running_max_end:
+                            running_max_end = end
+                        latency = end - start
+                        reservoir_seen += 1
+                        if len(reservoir) < RESERVOIR_SIZE:
+                            reservoir.append(latency)
+                        else:
+                            j = random.randint(0, reservoir_seen - 1)
+                            if j < RESERVOIR_SIZE:
+                                reservoir[j] = latency
 
                     # Update progress and stats
                     completed = len(all_results)
                     pbar.n = completed
                     pbar.refresh()
 
-                    # Calculate current metrics
+                    # Calculate current metrics -- incremental (see above),
+                    # not a full rescan.
                     if completed > 0:
-                        hits = sum(r[0] for r in all_results)
-                        recall = hits / (top * completed)
-                        total_time = calculate_coverage([r[1] for r in all_results])
-                        qps = completed / total_time
-                        latencies = [(r[1][1] - r[1][0]) for r in all_results]
-                        p50 = np.percentile(latencies, 50) * 1000
+                        recall = running_hits / (top * completed)
+                        total_time = running_max_end - running_min_start
+                        qps = completed / total_time if total_time > 0 else 0.0
+                        p50 = (np.percentile(reservoir, 50) * 1000) if reservoir else 0.0
 
                         recall_color = "\033[92m" if recall >= 0.95 else "\033[91m"
                         pbar.set_description(f"recall: {recall_color}{recall:.4f}\033[0m QPS: {qps:.2f} P50: {p50:.2f}ms")
