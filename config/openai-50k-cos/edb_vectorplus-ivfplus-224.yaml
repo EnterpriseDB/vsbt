@@ -1,0 +1,12 @@
+edb_vectorplus-ivfplus-openai-50k-224:
+  indexType: ivfplus
+  dataset: openai-50k-cos
+  datasetType: parquet
+  metric: cos
+  lists: 224  # ~sqrt(50k)
+  maintenance_work_mem: 1GB
+  pg_parallel_workers: 1
+  top: 10
+  benchmarks:
+    "40":  { probes: 40 }
+    "224": { probes: 224 }

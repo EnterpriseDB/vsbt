@@ -11,10 +11,11 @@ HUGEPAGE_SIZE_MB=2
 
 # Infer suite runner from config filename
 case "$(basename "$SUITE")" in
-  pgvector*)    RUNNER="pgvector_suite.py" ;;
-  vectorchord*) RUNNER="vectorchord_suite.py" ;;
-  pgpu*)        RUNNER="pgpu_suite.py" ;;
-  *)            echo "Cannot infer suite from config: $SUITE"; exit 1 ;;
+  pgvector*)                       RUNNER="pgvector_suite.py" ;;
+  edb_vectorplus*|edb-vectorplus*) RUNNER="pgvector_suite.py" ;;
+  vectorchord*)                    RUNNER="vectorchord_suite.py" ;;
+  pgpu*)                           RUNNER="pgpu_suite.py" ;;
+  *)                               echo "Cannot infer suite from config: $SUITE"; exit 1 ;;
 esac
 
 # Server tier definitions: "SB_GB:AVAILABLE_RAM_GB" pairs

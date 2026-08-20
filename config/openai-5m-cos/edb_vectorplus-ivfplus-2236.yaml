@@ -1,0 +1,20 @@
+edb_vectorplus-ivfplus-openai-5m-2236:
+  indexType: ivfplus
+  dataset: openai-5m-cos
+  datasetType: parquet
+  metric: cos
+  lists: 2236  # ~sqrt(5M)
+  rotation: true
+  maintenance_work_mem: 4GB
+  pg_parallel_workers: 32
+  top: 10
+  # Fixed, suite-level GUCs (optional -- omit to use ivfplus defaults).
+  # iterative_scan: relaxed_order       # off | relaxed_order | strict_order
+  # max_probes: 2000
+  # hierarchy_threshold: 4
+  benchmarks:
+    "20":  { probes: 20 }
+    "40":  { probes: 40 }
+    "80":  { probes: 80 }
+    "150": { probes: 150 }
+    "300": { probes: 300 }
