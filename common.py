@@ -6,6 +6,7 @@ import random
 import re
 import threading
 import time
+from datetime import datetime
 
 import numpy as np
 import psutil
@@ -969,6 +970,16 @@ class TestSuite:
         reservoir: list[float] = []
         reservoir_seen = 0
 
+        # Explicit, unambiguous markers for exactly when real query load
+        # starts and ends -- distinct from this function's/process's own
+        # entry and exit, which can be preceded/followed by setup or
+        # teardown time unrelated to query execution. A harness collecting
+        # system-wide metrics (e.g. mpstat) across the whole process
+        # lifetime can grep these out of the captured log to restrict its
+        # analysis to the actual load window, instead of inferring it from
+        # total_queries / QPS after the fact.
+        print(f"[BENCHMARK_LOAD_START] {datetime.now().astimezone().isoformat()}", flush=True)
+
         try:
             with mp.Pool(processes=query_clients) as pool:
                 for batch_result in pool.imap_unordered(_dispatch_parallel_batch, range(query_clients)):
@@ -1004,6 +1015,12 @@ class TestSuite:
 
                         recall_color = "\033[92m" if recall >= 0.95 else "\033[91m"
                         pbar.set_description(f"recall: {recall_color}{recall:.4f}\033[0m QPS: {qps:.2f} P50: {p50:.2f}ms")
+
+                # Still inside the `with mp.Pool(...)` block: the for-loop
+                # above only completes once every worker's results are in,
+                # so this fires before pool teardown -- the true "last
+                # query done" instant, not "process about to exit."
+                print(f"[BENCHMARK_LOAD_COMPLETE] {datetime.now().astimezone().isoformat()}", flush=True)
         finally:
             # Don't hold the (possibly large) arrays alive in module state
             # once the pool's done, and don't let a stale batch leak into
