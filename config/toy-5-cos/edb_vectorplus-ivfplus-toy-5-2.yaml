@@ -1,0 +1,11 @@
+edb_vectorplus-ivfplus-toy-5-2:
+  indexType: ivfplus
+  dataset: toy-5-cos
+  datasetType: parquet
+  metric: cos
+  lists: 2 #sqrt(1m)
+  maintenance_work_mem: 1GB
+  pg_parallel_workers: 1
+  top: 3
+  benchmarks:
+    "2":  { probes: 2 }

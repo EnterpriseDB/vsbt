@@ -95,6 +95,8 @@ def get_series_data(rows: list[dict], run_id: str) -> dict:
         elif row.get("nprob") not in ("N/A", "", None):
             eps = row.get("epsilon", "")
             label = f"{row['nprob']} e{eps}"
+        elif row.get("probes") not in ("N/A", "", None):
+            label = f"probes={row['probes']}"
         else:
             label = row.get("benchmark_name", "")
 

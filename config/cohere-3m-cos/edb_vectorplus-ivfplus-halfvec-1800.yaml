@@ -1,0 +1,16 @@
+edb_vectorplus-ivfplus-halfvec-cohere-3m-1800:
+  indexType: ivfplus
+  vectorType: halfvec
+  dataset: cohere-3m-cos
+  datasetType: parquet
+  metric: cos
+  lists: 1800 #sqrt(3m)
+  maintenance_work_mem: 12GB
+  pg_parallel_workers: 32
+  top: 10
+  benchmarks:
+    "20":  { probes: 20 }
+    "40":  { probes: 40 }
+    "80":  { probes: 80 }
+    "150": { probes: 150 }
+    "300": { probes: 300 }

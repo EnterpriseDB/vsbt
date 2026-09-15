@@ -165,6 +165,10 @@ WARMUP_MIN = 200
 WARMUP_MAX = 5000
 WARMUP_HARD_FLOOR = 100
 
+# pgvector column types vsbt can load (YAML `vectorType`, default "vector").
+# Whether a given index type can index them is the suite's concern.
+VECTOR_TYPES = ("vector", "halfvec")
+
 
 def psql_log_handler(diag):
     """Notice handler for psycopg connections — prints PostgreSQL NOTICEs."""
@@ -298,6 +302,13 @@ class TestSuite:
                  warmup: str = "auto"):
         self.suite_file = suite_file
         self.config = load_suite_config(suite_file)
+        for name, cfg in self.config.items():
+            vector_type = cfg.get("vectorType", "vector")
+            if vector_type not in VECTOR_TYPES:
+                raise ValueError(
+                    f"{name}: vectorType must be one of {VECTOR_TYPES}; "
+                    f"got {vector_type!r}"
+                )
         self.url = url
         self.devices = devices
         self.chunk_size = chunk_size
@@ -536,6 +547,7 @@ class TestSuite:
         dim = ds["dim"]
         n = ds["num"]
         data = ds["train"]
+        vector_type = ds["vector_type"]
 
         is_sliceable = hasattr(data, "__getitem__") and hasattr(data, "shape")
         conn = self.create_connection()
@@ -545,6 +557,7 @@ class TestSuite:
             print(f"    • Table:           {table_name}")
             print(f"    • Rows:            {n:,}")
             print(f"    • Dimensions:      {dim}")
+            print(f"    • Vector Type:     {vector_type}")
             print(f"    • Load Threads:    {self.max_load_threads}")
             print(f"    • Chunk Size:      {self.chunk_size:,}")
             print(f"    • Overwrite:       {self.overwrite_table}")
@@ -568,7 +581,7 @@ class TestSuite:
             conn.close()
             return
 
-        conn.execute(f"CREATE TABLE {table_name} (id integer, embedding vector({dim}))")
+        conn.execute(f"CREATE TABLE {table_name} (id integer, embedding {vector_type}({dim}))")
         if pg_parallel_workers is not None:
             conn.execute(f"ALTER TABLE {table_name} SET (parallel_workers = {pg_parallel_workers})")
         conn.commit()
@@ -589,10 +602,12 @@ class TestSuite:
                 if chunk_data.dtype != np.float32:
                     chunk_data = chunk_data.astype(np.float32)
 
+                # set_types picks the dumper by declared type, so float32
+                # rows are narrowed to f16 by pgvector's halfvec dumper.
                 with t_conn.cursor().copy(
                         f"COPY {table_name} (id, embedding) FROM STDIN WITH (FORMAT BINARY)"
                 ) as copy:
-                    copy.set_types(["integer", "vector"])
+                    copy.set_types(["integer", vector_type])
                     for i, vec in enumerate(chunk_data):
                         copy.write_row((chunk_start + i, vec))
                     while t_conn.pgconn.flush() == 1:
@@ -634,7 +649,7 @@ class TestSuite:
             with conn.cursor().copy(
                     f"COPY {table_name} (id, embedding) FROM STDIN WITH (FORMAT BINARY)"
             ) as copy:
-                copy.set_types(["integer", "vector"])
+                copy.set_types(["integer", vector_type])
                 for i, vec in data:
                     copy.write_row((i, vec))
                     while conn.pgconn.flush() == 1:
@@ -1161,14 +1176,20 @@ class TestSuite:
         if self._system_report_content:
             self.results[name]["system_report"] = self._system_report_content
 
-        dataset_name = self.config[name]["dataset"]
-        table_name = dataset_name.replace("-", "_")
         config = self.config[name]
+        dataset_name = config["dataset"]
+        table_name = dataset_name.replace("-", "_")
+        # A non-default column type gets its own table so float and halfvec
+        # runs of one dataset coexist (and --skip-* flags find the right one).
+        vector_type = config.get("vectorType", "vector")
+        if vector_type != "vector":
+            table_name = f"{table_name}_{vector_type}"
         if self.debug:
             print(f"\n⚙️  Suite Configuration:")
             print(f"    • Test Name:       {name}")
             print(f"    • Table:           {table_name}")
             print(f"    • Dataset:         {dataset_name}")
+            print(f"    • Vector Type:     {vector_type}")
             print(f"    • PG Parallel Workers: {config.get('pg_parallel_workers')}")
             print(f"    • Metric:          {config.get('metric')}")
             print(f"    • Centroids Table: {self.centroids_table or 'None'}")
@@ -1219,6 +1240,7 @@ class TestSuite:
         ds = datasets.get_dataset(dataset_name)
         # Compatibility mapping
         ds["answer"] = ds.pop("neighbors")
+        ds["vector_type"] = vector_type
 
         # 2. ADD EMBEDDINGS
         if not self.skip_add_embeddings:

@@ -9,6 +9,7 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 
+
 # --- CONFIGURATION ---
 DATA_DIR = os.environ.get("DATASET_LOCAL_DIR", "./datasets")
 DATASETS = {
@@ -109,6 +110,10 @@ DATASETS = {
         "s3_prefix": "s3://enterprisedb-vector-datasets/openai/5m",
         "base_dir": os.path.join(DATA_DIR, "openai/5m"),
     },
+    # --- CI/CD subsets (real slices of each family's smallest dataset, ground
+    #     truth recomputed against the subset). Tiny; downloaded from S3 like
+    #     the other parquet datasets. Generated offline via
+    #     utils/derive_datasets.py. ---
     "openai-5k-cos": {
         "type": "parquet",
         "metric": "cos",

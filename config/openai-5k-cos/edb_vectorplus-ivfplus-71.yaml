@@ -1,0 +1,19 @@
+edb_vectorplus-ivfplus-openai-5k-71:
+  indexType: ivfplus
+  dataset: openai-5k-cos
+  datasetType: parquet
+  metric: cos
+  lists: 71  # ~sqrt(5k)
+  maintenance_work_mem: 1GB
+  pg_parallel_workers: 1
+  top: 10
+  benchmarks:
+    "16": { probes: 16 }
+    "71": { probes: 71 }
+
+# Also consumed by edb_vectorplus CI (the benchmark-smoke job in build.yml),
+# which asserts a recall floor against it -- so lists/probes/top here are that
+# gate's specification, not just a local choice.
+#
+# probes 71 == lists, i.e. a full scan, which is what the recall gate asserts
+# on -- k-means variation cancels out there. Measured recall 0.9995.

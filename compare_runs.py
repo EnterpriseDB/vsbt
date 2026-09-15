@@ -148,6 +148,8 @@ def extract_run_summary(data: dict) -> dict:
     test_name = parsed["test_name"].lower()
     if "pgvector" in test_name:
         suite_type = "pgvector"
+    elif "vectorplus" in test_name or "ivfplus" in test_name:
+        suite_type = "edb_vectorplus"
     elif "pgpu" in test_name:
         suite_type = "pgpu"
     else:

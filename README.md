@@ -1,6 +1,6 @@
 # Vector Search Benchmark Suite
 
-A comprehensive benchmarking tool for PostgreSQL vector search extensions. Compare performance across **pgvector**, **VectorChord**, and **pgpu** (GPU-accelerated) on datasets ranging from 1M to 1B vectors.
+A comprehensive benchmarking tool for PostgreSQL vector search extensions. Compare performance across **pgvector**, **VectorChord**, **edb_vectorplus**, and **pgpu** (GPU-accelerated) on datasets ranging from 1M to 1B vectors.
 
 ## Supported Extensions
 
@@ -11,6 +11,7 @@ A comprehensive benchmarking tool for PostgreSQL vector search extensions. Compa
 | **[pgvector](https://github.com/pgvector/pgvector)** | IVFFlat BQ + Rerank | IVFFlat over `binary_quantize(embedding)` with full-precision rerank |
 | **[vchordq](https://github.com/tensorchord/VectorChord)** | [IVF-RaBitQ](https://arxiv.org/abs/2405.12497) ([VectorChord](https://blog.vectorchord.ai/scaling-vector-search-to-1-billion-on-postgresql)) | High dimensionality & high performance vector quantization & compression |
 | **[pgpu](https://github.com/EnterpriseDB/pgpu)** | IVF-RaBitQ (VectorChord) | GPU-accelerated index building for VectorChord |
+| **edb_vectorplus** | ivfplus (IVF + RaBitQ, quantized + rerank) | EDB's advanced vector index over pgvector `vector` or `halfvec` columns |
 
 ## Supported Datasets
 
@@ -86,6 +87,10 @@ CREATE EXTENSION IF NOT EXISTS vchord CASCADE;
 -- For PGPU benchmarks
 CREATE EXTENSION IF NOT EXISTS vchord CASCADE;
 CREATE EXTENSION IF NOT EXISTS pgpu;
+
+-- For edb_vectorplus benchmarks (CASCADE pulls in pgvector)
+CREATE EXTENSION IF NOT EXISTS edb_vectorplus CASCADE;
+CREATE EXTENSION IF NOT EXISTS pg_prewarm;
 ```
 
 ## Usage
@@ -134,6 +139,18 @@ python pgvector_suite.py -s config/laion-5m-test-ip/pgvector-m16-128.yaml --skip
 ```
 
 The same `pgvector_suite.py` entry point dispatches HNSW / IVFFlat / IVFFlat-BQ-Rerank based on the `indexType` field in the YAML (defaults to `hnsw` when absent).
+
+### Running edb_vectorplus Benchmarks
+
+```bash
+# ivfplus over a float32 `vector` column (default)
+python edb_vectorplus_suite.py -s config/openai-1m-cos/edb_vectorplus_ivfplus-1k.yaml
+
+# ivfplus over a `halfvec` column: vectorType: halfvec
+python edb_vectorplus_suite.py -s config/openai-1m-cos/edb_vectorplus-ivfplus-halfvec-1k.yaml
+```
+
+`vectorType: halfvec` loads the dataset into a separate table, `<dataset>_halfvec`, with an `halfvec(dim)` column (rows are narrowed to float16 during the binary COPY) and builds the index with the `halfvec_<metric>_ops` opclass, so float and halfvec runs of one dataset coexist in the same database. Recall is scored against the dataset's float32 ground truth, so an exhaustive scan (`probes` = `lists`) tops out marginally below 1.0 because of float16 rounding. ivfplus has no `bit` opclass, so bit/Hamming benchmarks remain pgvector-only (`indexType: ivfflat_bq_rerank`).
 
 ### Running VectorChord Benchmarks
 
@@ -323,6 +340,27 @@ pgvector-ivfflat-bq-rerank-openai-5m-2k:
     "400": { probes: 400 }
 ```
 
+### edb_vectorplus Configuration Example
+
+ivfplus sweeps `ivfplus.probes` over an index built with a fixed `lists`. `vectorType` is optional and defaults to `vector`; `halfvec` selects a float16 column and the matching opclass.
+
+```yaml
+edb_vectorplus-ivfplus-halfvec-openai-1m-1k:
+  indexType: ivfplus
+  vectorType: halfvec
+  dataset: openai-1m-cos
+  datasetType: parquet
+  metric: cos
+  lists: 1000          # ~sqrt(N)
+  maintenance_work_mem: 4GB
+  pg_parallel_workers: 32
+  top: 10
+  benchmarks:
+    "20":  { probes: 20 }
+    "80":  { probes: 80 }
+    "300": { probes: 300 }
+```
+
 ### VectorChord Configuration Example
 
 ```yaml
@@ -491,8 +529,10 @@ vector-search/
 ├── results.py                # Results management and visualization
 ├── compare_runs.py           # Historical benchmark comparison utility
 ├── chart_compare.py          # Cross-run comparison chart generator
-├── pgvector_suite.py         # pgvector HNSW benchmarks
+├── pgvector_suite.py         # pgvector HNSW / IVFFlat benchmarks
 ├── vectorchord_suite.py      # VectorChord IVF benchmarks
+├── edb_vectorplus_suite.py   # edb_vectorplus ivfplus benchmarks (vector / halfvec)
+├── test_edb_vectorplus_suite.py  # Offline self-check for the ivfplus suite helpers
 ├── pgpu_suite.py             # GPU-accelerated benchmarks
 ├── requirements.txt          # Python dependencies
 ├── config/                   # Benchmark configurations, grouped by dataset
