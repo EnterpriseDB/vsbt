@@ -1,6 +1,6 @@
 # Vector Search Benchmark Suite
 
-A comprehensive benchmarking tool for PostgreSQL vector search extensions. Compare performance across **pgvector**, **VectorChord**, **edb_vectorplus**, and **pgpu** (GPU-accelerated) on datasets ranging from 1M to 1B vectors.
+A comprehensive benchmarking tool for PostgreSQL vector search extensions and Milvus. Compare performance across **pgvector**, **VectorChord**, **edb_vectorplus**, **pgpu** (GPU-accelerated), and **Milvus** on datasets ranging from small test subsets to 1B vectors.
 
 ## Supported Extensions
 
@@ -12,6 +12,7 @@ A comprehensive benchmarking tool for PostgreSQL vector search extensions. Compa
 | **[vchordq](https://github.com/tensorchord/VectorChord)** | [IVF-RaBitQ](https://arxiv.org/abs/2405.12497) ([VectorChord](https://blog.vectorchord.ai/scaling-vector-search-to-1-billion-on-postgresql)) | High dimensionality & high performance vector quantization & compression |
 | **[pgpu](https://github.com/EnterpriseDB/pgpu)** | IVF-RaBitQ (VectorChord) | GPU-accelerated index building for VectorChord |
 | **edb_vectorplus** | ivfplus (IVF + RaBitQ, quantized + rerank) | EDB's advanced vector index over pgvector `vector` or `halfvec` columns |
+| **[Milvus](https://milvus.io/)** | IVF_FLAT / HNSW | Float32 vector search on a Milvus server |
 
 ## Supported Datasets
 
@@ -55,7 +56,7 @@ The 1M / 2M / 3M Cohere and 1M / 2M Openai variants are derived in-house as subs
 ### Prerequisites
 
 - Python 3.10+
-- PostgreSQL 15+ with one of the supported extensions installed
+- PostgreSQL 15+ with one of the supported extensions installed, or a Milvus 2.6 server for Milvus benchmarks
 
 ### Install Dependencies
 
@@ -151,6 +152,86 @@ python edb_vectorplus_suite.py -s config/openai-1m-cos/edb_vectorplus-ivfplus-ha
 ```
 
 `vectorType: halfvec` loads the dataset into a separate table, `<dataset>_halfvec`, with an `halfvec(dim)` column (rows are narrowed to float16 during the binary COPY) and builds the index with the `halfvec_<metric>_ops` opclass, so float and halfvec runs of one dataset coexist in the same database. Recall is scored against the dataset's float32 ground truth, so an exhaustive scan (`probes` = `lists`) tops out marginally below 1.0 because of float16 rounding. ivfplus has no `bit` opclass, so bit/Hamming benchmarks remain pgvector-only (`indexType: ivfflat_bq_rerank`).
+
+### Running Milvus Benchmarks
+
+Install the optional client and point the suite at a running Milvus 2.6 server
+([standalone setup](https://milvus.io/docs/v2.6.x/install_standalone-docker.md)):
+
+```bash
+pip install -r requirements-milvus.txt
+
+# Start the bundled local server (Docker must be running)
+docker compose -f utils/milvus-compose.yaml up -d --wait
+
+python milvus_suite.py -s config/cohere-5k-cos/milvus-ivfflat-71.yaml \
+    --url http://localhost:19530
+python milvus_suite.py -s config/cohere-5k-cos/milvus-m16-128.yaml \
+    --url http://localhost:19530
+
+# Query an existing collection with 8 concurrent clients
+python milvus_suite.py -s config/cohere-5k-cos/milvus-m16-128.yaml \
+    --skip-add-embeddings --skip-index-creation --query-clients 8
+```
+
+Authentication uses `MILVUS_TOKEN` (e.g. `root:Milvus`); the database is selected
+with `--db-name` or `MILVUS_DB_NAME` (default `default`). Milvus Lite is excluded
+from this runner. The bundled Docker image includes the Milvus client.
+The local Compose stack binds port 19530 to localhost and stores data in Docker
+volumes. Stop it with `docker compose -f utils/milvus-compose.yaml down`; the
+data volumes persist for later runs.
+
+The YAML uses the same parameter names as VSBT's pgvector configs:
+
+| VSBT key | Milvus parameter | Applies to |
+|----------|------------------|------------|
+| `indexType: ivfflat` | `IVF_FLAT` | IVF_FLAT |
+| `lists` (integer or `auto`) | `nlist` | IVF_FLAT build |
+| `probes` | `nprobe` | IVF_FLAT search |
+| `indexType: hnsw` | `HNSW` | HNSW |
+| `m` | `M` | HNSW build |
+| `efConstruction` | `efConstruction` | HNSW build |
+| `efSearch` | `ef` | HNSW search |
+
+These parameters follow the official [IVF_FLAT](https://milvus.io/docs/v2.6.x/ivf-flat.md)
+and [HNSW](https://milvus.io/docs/v2.6.x/hnsw.md) APIs. Example configs cover
+Cohere 5K/1M (cosine), SIFT (L2), and LAION 5M (inner product); other VSBT datasets
+work by changing `dataset` and the build/search parameters. The metric must match
+the dataset's ground truth. `auto` lists resolves to sqrt(vector count), capped
+at Milvus's 65,536 limit.
+
+Collections default to `vsbt_<dataset>_<index type>_<build parameters>` so IVF_FLAT
+and HNSW can coexist. Set `collection` in YAML to override the name. Dataset IDs
+are inserted as explicit INT64 primary keys. Existing collections require
+`--skip-add-embeddings` or `--overwrite-table`; the latter drops and reloads the
+selected collection. Reuse checks the schema, row count, metric, and index
+parameters. Without `--skip-index-creation`, the embedding index is replaced.
+
+Inserts use bounded batches (`--chunk-size`, default 1,000, capped by dimension)
+and `--max-load-threads`. The suite flushes data before building the index,
+waits for index completion, and loads the collection before searching. Build
+time excludes collection loading; its duration is saved separately in run JSON.
+`--timeout` controls RPC/build timeouts in seconds (default 86,400).
+
+Each client sends one search RPC per query and runs the same query set. Reported
+latencies include client/server communication. Warmup (`auto`, `off`, or integer
+N) runs before each search setting and is excluded from metrics. Searches use
+Strong consistency. Milvus indexes segments independently, so `lists` is per
+segment; small segments may use exact scans. The run JSON records index row
+counts and state for inspection.
+
+Results use VSBT's existing JSON, CSV, Markdown, and charts, including recall,
+QPS, P50/P99 latency, insert/flush time, and index build time. Index size is
+reported as `N/A` because this API does not expose on-disk index bytes. Local
+servers use host system monitoring; specify `--devices` for disk monitoring.
+PostgreSQL statistics and the PostgreSQL memory simulation scripts do not apply
+to Milvus. Use `milvus_suite.py` directly.
+
+Run the offline adapter and report tests with:
+
+```bash
+python -m unittest test_milvus_suite.py
+```
 
 ### Running VectorChord Benchmarks
 
@@ -530,6 +611,7 @@ vector-search/
 ├── compare_runs.py           # Historical benchmark comparison utility
 ├── chart_compare.py          # Cross-run comparison chart generator
 ├── pgvector_suite.py         # pgvector HNSW / IVFFlat benchmarks
+├── milvus_suite.py           # Milvus IVF_FLAT / HNSW server benchmarks
 ├── vectorchord_suite.py      # VectorChord IVF benchmarks
 ├── edb_vectorplus_suite.py   # edb_vectorplus ivfplus benchmarks (vector / halfvec)
 ├── test_edb_vectorplus_suite.py  # Offline self-check for the ivfplus suite helpers

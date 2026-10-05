@@ -1,0 +1,3 @@
+# Optional server client; keep the SDK in the Milvus 2.6 API family.
+-r requirements.txt
+pymilvus>=2.6.0,<2.7.0

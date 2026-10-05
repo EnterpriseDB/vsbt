@@ -1,0 +1,32 @@
+# Local benchmark server with embedded etcd and local object storage:
+# https://milvus.io/docs/install_standalone-docker.md
+# Start: docker compose -f utils/milvus-compose.yaml up -d --wait
+name: vsbt-milvus
+
+services:
+  standalone:
+    image: milvusdb/milvus:v2.6.16
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      DEPLOY_MODE: STANDALONE
+      ETCD_USE_EMBED: "true"
+      ETCD_DATA_DIR: /var/lib/milvus/etcd
+      ETCD_CONFIG_PATH: /milvus/configs/embedEtcd.yaml
+      COMMON_STORAGETYPE: local
+    volumes:
+      - milvus-data:/var/lib/milvus
+      - ./milvus-embed-etcd.yaml:/milvus/configs/embedEtcd.yaml:ro
+    ports:
+      - "127.0.0.1:19530:19530"
+      - "127.0.0.1:9091:9091"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 10s
+      start_period: 90s
+      timeout: 10s
+      retries: 12
+
+volumes:
+  milvus-data:

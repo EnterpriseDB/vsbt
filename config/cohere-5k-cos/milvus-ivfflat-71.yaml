@@ -1,0 +1,13 @@
+milvus-ivfflat-cohere-5k-71:
+  indexType: ivfflat
+  dataset: cohere-5k-cos
+  datasetType: parquet
+  metric: cos
+  lists: 71
+  top: 10
+  benchmarks:
+    "1":  { probes: 1 }
+    "5":  { probes: 5 }
+    "10": { probes: 10 }
+    "30": { probes: 30 }
+    "71": { probes: 71 }

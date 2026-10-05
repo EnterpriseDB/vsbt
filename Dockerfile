@@ -2,7 +2,7 @@
 # vsbt (Vector Search Benchmark Tool) Container Image
 # =============================================================================
 # Contains all dependencies for running vector search benchmarks:
-# psycopg3, numpy, h5py, pgvector.
+# psycopg3, numpy, h5py, pgvector, pymilvus.
 #
 # Used standalone or as a K8s Job image by pgperf.
 #
@@ -31,6 +31,6 @@ COPY . /app/vsbt/
 
 # Install Python dependencies
 WORKDIR /app/vsbt
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements-milvus.txt
 
 WORKDIR /app/vsbt
