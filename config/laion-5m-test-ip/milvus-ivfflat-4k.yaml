@@ -1,0 +1,13 @@
+milvus-ivfflat-laion-5m-4k:
+  indexType: ivfflat
+  dataset: laion-5m-test-ip
+  datasetType: hdf5
+  metric: ip
+  lists: 4000
+  top: 10
+  benchmarks:
+    "10":  { probes: 10 }
+    "30":  { probes: 30 }
+    "60":  { probes: 60 }
+    "100": { probes: 100 }
+    "200": { probes: 200 }

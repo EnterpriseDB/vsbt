@@ -1,4 +1,5 @@
-edb_vectorplus-ivfplus-cohere-1m-1k:
+edb_
+vectorplus-ivfplus-cohere-1m-1k:
   indexType: ivfplus
   dataset: cohere-1m-cos
   datasetType: parquet

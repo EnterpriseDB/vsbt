@@ -1,0 +1,13 @@
+milvus-ivfflat-sift-1m-1k:
+  indexType: ivfflat
+  dataset: sift-128-euclidean
+  datasetType: hdf5
+  metric: l2
+  lists: 1000
+  top: 10
+  benchmarks:
+    "1":   { probes: 1 }
+    "10":  { probes: 10 }
+    "30":  { probes: 30 }
+    "60":  { probes: 60 }
+    "100": { probes: 100 }
